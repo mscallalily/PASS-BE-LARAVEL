@@ -12,7 +12,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        //
+        $middleware->redirectGuestsTo(
+            fn ($request) => $request->is('api/*') ? null : route('login')
+        );
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //
