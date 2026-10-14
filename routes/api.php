@@ -1,8 +1,10 @@
-
+﻿
 <?php
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\UserManagementController;
+use App\Http\Controllers\Api\AdminDashboardController;
+use App\Http\Controllers\Api\AuditLogController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/register', [AuthController::class, 'register']);
@@ -22,6 +24,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
 
     Route::prefix('admin')->group(function () {
+        Route::get('/dashboard', [AdminDashboardController::class, 'index']);
+        Route::get('/audit-logs', [AuditLogController::class, 'index']);
         Route::get('/users', [UserManagementController::class, 'index']);
 
         Route::patch(
@@ -35,3 +39,4 @@ Route::middleware('auth:sanctum')->group(function () {
         );
     });
 });
+
