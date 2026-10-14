@@ -1,5 +1,4 @@
 <?php
-
 namespace Database\Seeders;
 
 use App\Models\Department;
@@ -9,23 +8,26 @@ class DepartmentSeeder extends Seeder
 {
     public function run(): void
     {
-        // PLACEHOLDERS from the Figma prototype. Replace with the official DYCI list.
         $departments = [
-            ['COE', 'College of Engineering'],
-            ['COS', 'College of Science'],
-            ['COB', 'College of Business'],
-            ['COA', 'College of Arts'],
-            ['CON', 'College of Nursing'],
-            ['REG', 'Registrar Office'],
-            ['HR',  'HR Department'],
-            ['IT',  'IT Department'],
-            ['SEC', 'Security Office'],
+            ['CCS', 'College of Computer Studies'],
+            ['COE', 'College of Education'],
+            ['CHMT', 'College of Hospitality Management and Tourism'],
+            ['CAS', 'College of Art and Sciences'],
+            ['CME', 'College of Maritime Education'],
+            ['CHS', 'College of Health Sciences'],
+            ['SOP', 'School of Psychology'],
+            ['SME', 'School of Mechanical Engineering'],
+            ['COA', 'College of Accountancy'],
+            ['CBA', 'College of Business Administration'],
         ];
 
         foreach ($departments as [$code, $name]) {
             Department::updateOrCreate(
                 ['department_code' => $code],
-                ['department_name' => $name, 'is_active' => true]
+                [
+                    'department_name' => $name,
+                    'is_active' => true,
+                ]
             );
         }
     }

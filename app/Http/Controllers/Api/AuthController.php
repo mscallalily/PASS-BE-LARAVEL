@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Notifications\PassEmailVerificationNotification;
 use App\Http\Controllers\Controller;
 use App\Models\Department;
 use App\Models\Role;
@@ -332,9 +333,21 @@ DB::table('driver_licenses')->insert([
                 return $user;
             });
 
+            // Send verification email after the database transaction succeeds.
+            $emailVerificationSent = false;
+
+            try {
+                $user->notify(new PassEmailVerificationNotification());
+                $emailVerificationSent = true;
+            } catch (Throwable $mailException) {
+                report($mailException);
+            }
+
             return response()->json([
-                'message' =>
-                    'Registration submitted. Your account is pending approval.',
+                'message' => $emailVerificationSent
+                    ? 'Registration submitted. Please check your email to verify your address. Your account is still pending administrator approval.'
+                    : 'Registration submitted, but the verification email could not be sent. Your account is still pending administrator approval. Please try again later.',
+                'email_verification_sent' => $emailVerificationSent,
                 'user' => $this->userPayload($user),
             ], 201);
         } catch (Throwable $exception) {
