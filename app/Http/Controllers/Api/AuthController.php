@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Notifications\PassEmailVerificationNotification;
 use App\Http\Controllers\Controller;
 use App\Jobs\ProcessLicenseVerification;
 use App\Models\Department;
@@ -351,11 +352,21 @@ $licenseId = DB::table('driver_licenses')->insertGetId([
                 } catch (Throwable $exception) {
                     report($exception);
                 }
+            // Send verification email after the database transaction succeeds.
+            $emailVerificationSent = false;
+
+            try {
+                $user->notify(new PassEmailVerificationNotification());
+                $emailVerificationSent = true;
+            } catch (Throwable $mailException) {
+                report($mailException);
             }
 
             return response()->json([
-                'message' =>
-                    'Registration submitted. Your account is pending approval.',
+                'message' => $emailVerificationSent
+                    ? 'Registration submitted. Please check your email to verify your address. Your account is still pending administrator approval.'
+                    : 'Registration submitted, but the verification email could not be sent. Your account is still pending administrator approval. Please try again later.',
+                'email_verification_sent' => $emailVerificationSent,
                 'user' => $this->userPayload($user),
             ], 201);
         } catch (Throwable $exception) {
@@ -501,4 +512,84 @@ $licenseId = DB::table('driver_licenses')->insertGetId([
             'attempted_at' => now(),
         ]);
     }
+}
+
+public function forgotPassword(Request $request): JsonResponse
+{
+    $data = $request->validate([
+        'email' => ['required', 'email', 'max:255'],
+    ]);
+
+    $status = Password::sendResetLink([
+        'email' => $data['email'],
+    ]);
+
+    // Avoid revealing whether an email exists in the database.
+    if ($status === Password::RESET_LINK_SENT ||
+        $status === Password::INVALID_USER) {
+        return response()->json([
+            'message' =>
+                'If an account exists for that email, a password reset link will be sent.',
+        ]);
+    }
+
+    if ($status === Password::RESET_THROTTLED) {
+        return response()->json([
+            'message' =>
+                'Please wait before requesting another reset link.',
+        ], 429);
+    }
+
+    report(new \RuntimeException(
+        'Password reset link could not be sent: ' . $status
+    ));
+
+    return response()->json([
+        'message' =>
+            'Unable to process your request right now. Please try again later.',
+    ], 500);
+}
+
+public function resetPassword(Request $request): JsonResponse
+{
+    $data = $request->validate([
+        'token' => ['required', 'string'],
+        'email' => ['required', 'email', 'max:255'],
+        'password' => ['required', 'string', 'min:8', 'confirmed'],
+    ]);
+
+    $status = Password::reset(
+        $data,
+        function (User $user, string $password): void {
+            // The User model's "hashed" cast hashes the new password.
+            $user->forceFill([
+                'password' => $password,
+                'remember_token' => Str::random(60),
+            ])->save();
+
+            // Revoke existing API sessions after a password change.
+            $user->tokens()->delete();
+        }
+    );
+
+    if ($status === Password::PASSWORD_RESET) {
+        return response()->json([
+            'message' => 'Your password has been reset successfully.',
+        ]);
+    }
+
+    return response()->json([
+        'message' => match ($status) {
+            Password::INVALID_USER =>
+                'Unable to reset the password for this account.',
+            Password::INVALID_TOKEN =>
+                'This reset link is invalid or has expired. Please request a new one.',
+            Password::RESET_THROTTLED =>
+                'Please wait before trying again.',
+            default =>
+                'Unable to reset your password. Please request a new link.',
+        },
+    ], 422);
+}
+
 }
