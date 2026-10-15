@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Notifications\PassEmailVerificationNotification;
 use App\Http\Controllers\Controller;
+use App\Jobs\ProcessLicenseVerification;
 use App\Models\Department;
 use App\Models\Role;
 use App\Models\User;
@@ -13,8 +14,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Storage;
 use Throwable;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
@@ -217,6 +218,10 @@ $firstName = implode(' ', $nameParts);
                 $storedFiles[] = $licensePath;
             }
 
+            // Set when a license is saved, so its automatic check runs after commit.
+            $licenseId = null;
+            $licenseRunId = (string) Str::uuid();
+
             $user = DB::transaction(function () use (
                 $data,
                 $hasVehicle,
@@ -225,7 +230,10 @@ $firstName = implode(' ', $nameParts);
                 $firstName,
                 $lastName,
                 $schoolIdPath,
-                $licensePath
+                $licensePath,
+                $licenseRunId,
+                $request,
+                &$licenseId
             ) {
                 // Create the account as pending. Do not auto-approve it.
                 $user = User::create([
@@ -268,7 +276,7 @@ $firstName = implode(' ', $nameParts);
                 }
 
                 if ($hasVehicle) {
-
+                    
 
 $vehicle = Vehicle::create([
     'owner_user_id' => $user->user_id,
@@ -280,9 +288,9 @@ $vehicle = Vehicle::create([
     'registration_status' => 'registered',
 ]);
 
+// active_flag is a generated column, so it is not set here.
 $vehicle->authorizations()->create([
     'authorization_status' => 'pending',
-    'active_flag' => true,
 ]);
 
 
@@ -300,8 +308,8 @@ $vehicle->authorizations()->create([
                     ], 'driver_id');
 
                     // Save the driver's license details and private file path.
-
-DB::table('driver_licenses')->insert([
+                    
+$licenseId = DB::table('driver_licenses')->insertGetId([
     'driver_id' => $driverId,
     'license_number' => $data['license_number'],
     'license_type' => $data['license_type'],
@@ -310,11 +318,15 @@ DB::table('driver_licenses')->insert([
     'expiry_date' => $data['license_expiry'],
     'issuing_agency' => null,
     'license_image_path' => $licensePath,
+    'original_file_name' => Str::limit($request->file('license_file')->getClientOriginalName(), 250, ''),
     'license_status' => 'valid',
-    'current_flag' => true,
+    'verification_status' => 'processing',
+    'verification_source' => 'automatic',
+    'verification_run_id' => $licenseRunId,
+    'submitted_at' => now(),
     'created_at' => now(),
     'updated_at' => now(),
-]);
+], 'license_id');
 
 
                     // Link the vehicle to the registered driver.
@@ -333,6 +345,13 @@ DB::table('driver_licenses')->insert([
                 return $user;
             });
 
+            // The registration is saved; a failure in the document check must not undo it.
+            if ($licenseId) {
+                try {
+                    ProcessLicenseVerification::dispatch($licenseId, $licenseRunId);
+                } catch (Throwable $exception) {
+                    report($exception);
+                }
             // Send verification email after the database transaction succeeds.
             $emailVerificationSent = false;
 
@@ -493,6 +512,7 @@ DB::table('driver_licenses')->insert([
             'attempted_at' => now(),
         ]);
     }
+}
 
 public function forgotPassword(Request $request): JsonResponse
 {

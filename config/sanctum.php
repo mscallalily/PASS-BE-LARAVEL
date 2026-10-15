@@ -50,7 +50,9 @@ return [
     |
     */
 
-    'expiration' => null,
+    // Login tokens expire after 7 days by default (set SANCTUM_EXPIRATION, in
+    // minutes, to change it). Expired tokens are pruned daily (routes/console.php).
+    'expiration' => env('SANCTUM_EXPIRATION', 10080),
 
     /*
     |--------------------------------------------------------------------------

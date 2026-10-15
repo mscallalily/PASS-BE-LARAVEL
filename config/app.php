@@ -15,8 +15,6 @@ return [
 
     'name' => env('APP_NAME', 'Laravel'),
 
-    'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
-
     /*
     |--------------------------------------------------------------------------
     | Application Environment
@@ -68,6 +66,14 @@ return [
     */
 
     'timezone' => 'UTC',
+
+    /*
+    | Database times stay in UTC (above). Calendar rules ("today", date-only
+    | validity such as authorization or license expiry) and display labels
+    | use the campus timezone below. See App\Support\CampusTime.
+    */
+
+    'display_timezone' => env('APP_DISPLAY_TIMEZONE', 'Asia/Manila'),
 
     /*
     |--------------------------------------------------------------------------

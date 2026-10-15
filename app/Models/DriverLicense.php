@@ -20,7 +20,17 @@ class DriverLicense extends Model
         'expiry_date',
         'issuing_agency',
         'license_image_path',
+        'original_file_name',
         'license_status',
+        'verification_status',
+        'verification_source',
+        'verification_reason',
+        'ocr_result',
+        'verification_run_id',
+        'submitted_at',
+        'checked_at',
+        'reviewed_by',
+        'reviewed_at',
     ];
 
     protected function casts(): array
@@ -28,6 +38,10 @@ class DriverLicense extends Model
         return [
             'issue_date' => 'date',
             'expiry_date' => 'date',
+            'ocr_result' => 'array',
+            'submitted_at' => 'datetime',
+            'checked_at' => 'datetime',
+            'reviewed_at' => 'datetime',
         ];
     }
 
