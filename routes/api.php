@@ -16,10 +16,16 @@ use App\Http\Controllers\Api\RfidReaderController;
 use App\Http\Controllers\Api\AccessEventController;
 use App\Http\Controllers\Api\VisitorAccessController;
 use App\Http\Controllers\Api\DeviceSimulatorController;
+use App\Http\Controllers\Api\GuestAccountController;
+use App\Http\Controllers\Api\SyncController;
 
 Route::get('/departments', [DepartmentController::class, 'index']);
 
 Route::post('/register', [AuthController::class, 'register']);
+
+// Guest (visitor) self-registration.
+Route::post('/guest/register', [GuestAccountController::class, 'register'])
+    ->middleware('throttle:5,1');
 
 // Registered RFID gate readers authenticate with X-Reader-Code / X-Reader-Key.
 Route::post('/devices/rfid/scan', [RfidReaderController::class, 'scan'])
@@ -52,6 +58,8 @@ Route::post('/reset-password', [AuthController::class, 'resetPassword'])
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
 
+    // Change markers for the shared frontend refresh (polled every few seconds while a tab is visible).
+    Route::get('/sync/revision', [SyncController::class, 'revision'])->middleware('throttle:120,1');
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/parking/dashboard', [ParkingDashboardController::class, 'index']);
     Route::get('/vehicles/authorizations', [VehicleAuthorizationController::class, 'index']);
@@ -101,6 +109,19 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/passes', [VisitorAccessController::class, 'passes']);
         Route::get('/passes/lookup', [VisitorAccessController::class, 'lookup']);
         Route::post('/passes/{id}/revoke', [VisitorAccessController::class, 'revoke'])->whereNumber('id');
+    });
+
+    // Guest (visitor) account: own profile, vehicles, requests, passes and visits only.
+    Route::prefix('guest')->group(function () {
+        Route::get('/profile', [GuestAccountController::class, 'profile']);
+        Route::patch('/profile', [GuestAccountController::class, 'updateProfile']);
+        Route::get('/vehicles', [GuestAccountController::class, 'vehicles']);
+        Route::post('/vehicles', [GuestAccountController::class, 'storeVehicle'])->middleware('throttle:20,1');
+        Route::get('/requests', [GuestAccountController::class, 'requests']);
+        Route::post('/requests', [GuestAccountController::class, 'storeRequest'])->middleware('throttle:20,1');
+        Route::post('/requests/{id}/cancel', [GuestAccountController::class, 'cancelRequest'])->whereNumber('id');
+        Route::get('/passes', [GuestAccountController::class, 'passes']);
+        Route::get('/visits', [GuestAccountController::class, 'visits']);
     });
 
     // Development-only gate simulator (config/pass.php); 404 unless enabled for the tester.

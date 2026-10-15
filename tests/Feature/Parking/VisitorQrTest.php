@@ -34,7 +34,7 @@ class VisitorQrTest extends ParkingTestCase
 
     public function test_approving_a_request_issues_one_pass_linked_to_request_visitor_and_vehicle(): void
     {
-        $this->actingAsStaff();
+        $this->actingAsAdmin();
         $payload = $this->requestPayload();
 
         $id = $this->postJson('/api/visitors/requests', $payload)->assertCreated()->json('request_id');
@@ -60,13 +60,17 @@ class VisitorQrTest extends ParkingTestCase
 
     public function test_visitor_enters_and_exits_with_an_approved_pass_which_is_then_used_up(): void
     {
-        $this->actingAsStaff();
+        $this->actingAsAdmin();
         $pass = $this->approvedPass();
         $vehicleId = DB::table('qr_passes')->where('qr_pass_id', $pass['qr_pass_id'])->value('vehicle_id');
 
         $in = $this->gate('entry', ['qr_pass_code' => $pass['pass_code']]);
 
         $this->assertSame('granted', $in['status']);
+        // After the entry scan the pass still has its exit use left.
+        $row = DB::table('qr_passes')->where('qr_pass_id', $pass['qr_pass_id'])->first();
+        $this->assertSame(1, (int) $row->use_count);
+        $this->assertSame('active', $row->pass_status);
         $txn = $this->activeTransaction($vehicleId);
         $this->assertSame('qr', $txn->access_method);
         $this->assertNotNull($txn->visitor_id);
@@ -82,7 +86,7 @@ class VisitorQrTest extends ParkingTestCase
 
     public function test_rejected_request_issues_no_pass_and_cannot_be_approved_later(): void
     {
-        $this->actingAsStaff();
+        $this->actingAsAdmin();
         $id = $this->postJson('/api/visitors/requests', $this->requestPayload())->assertCreated()->json('request_id');
 
         $this->postJson("/api/visitors/requests/{$id}/reject", [])->assertUnprocessable();
@@ -94,7 +98,7 @@ class VisitorQrTest extends ParkingTestCase
 
     public function test_revoked_pass_is_denied(): void
     {
-        $this->actingAsStaff();
+        $this->actingAsAdmin();
         $pass = $this->approvedPass();
 
         $this->postJson("/api/visitors/passes/{$pass['qr_pass_id']}/revoke", ['reason' => 'Visit cancelled'])->assertOk();
@@ -106,7 +110,7 @@ class VisitorQrTest extends ParkingTestCase
 
     public function test_expired_pass_is_denied(): void
     {
-        $this->actingAsStaff();
+        $this->actingAsAdmin();
         $pass = $this->approvedPass();
 
         $this->travel(5)->hours();
@@ -119,7 +123,7 @@ class VisitorQrTest extends ParkingTestCase
 
     public function test_legacy_pass_without_an_approved_request_cannot_enter_but_can_exit(): void
     {
-        $this->actingAsStaff();
+        $this->actingAsAdmin();
         $visitor = $this->visitorVehicle();
         $legacy = $this->rawPass(['visitor_id' => $visitor['visitor_id'], 'vehicle_id' => $visitor['vehicle_id']]);
 
@@ -140,7 +144,7 @@ class VisitorQrTest extends ParkingTestCase
 
     public function test_plate_of_a_campus_user_cannot_be_registered_and_nothing_is_saved(): void
     {
-        $this->actingAsStaff();
+        $this->actingAsAdmin();
         $car = $this->campusVehicle();
         $visitorsBefore = DB::table('visitors')->count();
 
@@ -152,12 +156,23 @@ class VisitorQrTest extends ParkingTestCase
 
     public function test_overlapping_request_for_the_same_vehicle_is_refused(): void
     {
-        $this->actingAsStaff();
+        $this->actingAsAdmin();
         $payload = $this->requestPayload();
         $this->postJson('/api/visitors/requests', $payload)->assertCreated();
         $visitorId = DB::table('visitors')->orderByDesc('visitor_id')->value('visitor_id');
 
         $this->postJson('/api/visitors/requests', ['visitor_id' => $visitorId] + $payload)->assertStatus(409);
+    }
+
+    public function test_parking_staff_can_register_requests_but_cannot_approve_or_reject(): void
+    {
+        $this->actingAsStaff();
+        $id = $this->postJson('/api/visitors/requests', $this->requestPayload())->assertCreated()->json('request_id');
+
+        $this->postJson("/api/visitors/requests/{$id}/approve")->assertForbidden();
+        $this->postJson("/api/visitors/requests/{$id}/reject", ['remarks' => 'x'])->assertForbidden();
+        $this->assertSame('pending', DB::table('visitor_requests')->where('request_id', $id)->value('request_status'));
+        $this->assertFalse(DB::table('qr_passes')->where('request_id', $id)->exists());
     }
 
     public function test_regular_users_cannot_manage_visitors(): void

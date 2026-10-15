@@ -1,0 +1,259 @@
+<?php
+
+namespace Tests\Feature\Parking;
+
+use App\Models\User;
+use App\Support\CampusTime;
+use Database\Seeders\GuestDemoSeeder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Laravel\Sanctum\Sanctum;
+
+class GuestAccountTest extends ParkingTestCase
+{
+    private function registration(array $overrides = []): array
+    {
+        return $overrides + [
+            'full_name' => 'Ana Maria Cruz',
+            'email' => 'ana.' . random_int(1000, 99999) . '@example.com',
+            'contact_number' => '0917 123 4567',
+            'password' => 'Visitor2026pass',
+            'password_confirmation' => 'Visitor2026pass',
+            'agree' => true,
+        ];
+    }
+
+    /** Register through the API and sign in as that guest. */
+    private function guest(): User
+    {
+        $data = $this->registration();
+        $this->postJson('/api/guest/register', $data)->assertCreated();
+        $user = User::where('email', $data['email'])->firstOrFail();
+        Sanctum::actingAs($user);
+
+        return $user;
+    }
+
+    private function guestVehicle(): int
+    {
+        return $this->postJson('/api/guest/vehicles', [
+            'plate_number' => 'gst ' . random_int(1000, 9999),
+            'vehicle_type_id' => DB::table('vehicle_types')->where('type_code', 'sedan')->value('vehicle_type_id'),
+        ])->assertCreated()->json('vehicle_id');
+    }
+
+    private function requestToday(int $vehicleId, int $hours = 4): int
+    {
+        $now = CampusTime::now();
+
+        return $this->postJson('/api/guest/requests', [
+            'vehicle_id' => $vehicleId,
+            'visit_date' => $now->toDateString(),
+            'arrival_time' => $now->subMinutes(30)->format('H:i') < $now->format('H:i') ? $now->subMinutes(30)->format('H:i') : '00:00',
+            'departure_time' => $now->addHours($hours)->format('H:i') > $now->format('H:i') ? $now->addHours($hours)->format('H:i') : '23:59',
+            'purpose' => 'Meeting',
+            'visiting' => 'Registrar',
+        ])->assertCreated()->json('request_id');
+    }
+
+    public function test_registration_creates_account_role_profile_and_linked_visitor(): void
+    {
+        $data = $this->registration();
+
+        $this->postJson('/api/guest/register', $data)->assertCreated();
+
+        $user = DB::table('users')->where('email', $data['email'])->first();
+        $this->assertSame('other', $user->user_type);
+        $this->assertSame('active', $user->account_status);
+        $this->assertNotSame($data['password'], $user->password);
+        $this->assertTrue(Hash::check($data['password'], $user->password));
+        $this->assertTrue(User::find($user->user_id)->isGuest());
+        $this->assertSame('Ana Maria', DB::table('user_profiles')->where('user_id', $user->user_id)->value('first_name'));
+        $visitor = DB::table('visitors')->where('user_id', $user->user_id)->first();
+        $this->assertSame('Cruz', $visitor->last_name);
+        $this->assertSame('09171234567', $visitor->contact_number);
+
+        // Sign in with the registered email and password; the account is a guest.
+        $login = $this->postJson('/api/login', ['identifier' => $data['email'], 'password' => $data['password']])->assertOk();
+        $this->assertSame('guest', $login->json('user.role'));
+        $this->assertSame('Ana Maria Cruz', $login->json('user.name'));
+    }
+
+    public function test_registration_validation_and_duplicates(): void
+    {
+        $this->withoutMiddleware(\Illuminate\Routing\Middleware\ThrottleRequests::class);
+        $data = $this->registration();
+        $this->postJson('/api/guest/register', $data)->assertCreated();
+
+        $this->postJson('/api/guest/register', $this->registration(['email' => strtoupper($data['email'])]))->assertUnprocessable()->assertJsonValidationErrors('email');
+        $this->postJson('/api/guest/register', $this->registration(['password_confirmation' => 'Different2026']))->assertUnprocessable()->assertJsonValidationErrors('password');
+        $this->postJson('/api/guest/register', $this->registration(['contact_number' => '12345']))->assertUnprocessable()->assertJsonValidationErrors('contact_number');
+        $this->postJson('/api/guest/register', $this->registration(['full_name' => 'Madonna']))->assertUnprocessable()->assertJsonValidationErrors('full_name');
+        $this->postJson('/api/guest/register', $this->registration(['agree' => false]))->assertUnprocessable()->assertJsonValidationErrors('agree');
+        $this->postJson('/api/guest/register', $this->registration(['password' => 'short', 'password_confirmation' => 'short']))->assertUnprocessable()->assertJsonValidationErrors('password');
+    }
+
+    public function test_registration_is_rate_limited(): void
+    {
+        for ($i = 0; $i < 5; $i++) {
+            $this->postJson('/api/guest/register', $this->registration(['contact_number' => 'bad']))->assertUnprocessable();
+        }
+        $this->postJson('/api/guest/register', $this->registration())->assertStatus(429);
+    }
+
+    public function test_registration_is_all_or_nothing(): void
+    {
+        DB::table('roles')->where('role_code', 'guest')->update(['is_active' => false]);
+        $users = DB::table('users')->count();
+        $visitors = DB::table('visitors')->count();
+
+        $this->postJson('/api/guest/register', $this->registration())->assertStatus(503);
+
+        $this->assertSame($users, DB::table('users')->count());
+        $this->assertSame($visitors, DB::table('visitors')->count());
+    }
+
+    public function test_guest_cannot_use_staff_or_admin_endpoints(): void
+    {
+        $this->guest();
+
+        $this->getJson('/api/parking/dashboard')->assertForbidden();
+        $this->getJson('/api/visitors/requests')->assertForbidden();
+        $this->getJson('/api/access-events')->assertForbidden();
+        $this->postJson('/api/parking/entry', ['plate_number' => 'X 1'])->assertForbidden();
+        $this->postJson('/api/visitors/requests/1/approve')->assertForbidden();
+    }
+
+    public function test_guest_endpoints_reject_non_guests(): void
+    {
+        $this->actingAsStaff();
+        $this->getJson('/api/guest/requests')->assertForbidden();
+    }
+
+    public function test_guest_sees_and_uses_only_their_own_records(): void
+    {
+        $this->guest();
+        $otherVehicle = $this->guestVehicle();
+        $otherRequest = $this->requestToday($otherVehicle);
+
+        $this->guest();
+        $this->assertSame([], $this->getJson('/api/guest/vehicles')->json('data'));
+        $this->assertSame([], $this->getJson('/api/guest/requests')->json('data'));
+        $this->postJson('/api/guest/requests', [
+            'vehicle_id' => $otherVehicle, 'visit_date' => CampusTime::date(), 'arrival_time' => '00:00', 'departure_time' => '23:59', 'purpose' => 'x', 'visiting' => 'y',
+        ])->assertUnprocessable()->assertJsonValidationErrors('vehicle_id');
+        $this->postJson("/api/guest/requests/{$otherRequest}/cancel")->assertNotFound();
+    }
+
+    public function test_request_is_pending_without_a_pass_and_admins_are_notified(): void
+    {
+        $admin = $this->user('admin');
+        $this->guest();
+        $vehicle = $this->guestVehicle();
+
+        $id = $this->requestToday($vehicle);
+
+        $this->assertSame('pending', DB::table('visitor_requests')->where('request_id', $id)->value('request_status'));
+        $this->assertFalse(DB::table('qr_passes')->where('request_id', $id)->exists());
+        $this->assertSame([], $this->getJson('/api/guest/passes')->json('data'));
+        $this->assertTrue(DB::table('notifications')->where('user_id', $admin->user_id)->where('notification_type', 'visitor_request_submitted')->where('related_id', $id)->exists());
+        $this->assertSame('pending', $this->getJson('/api/guest/requests')->json('data.0.request_status'));
+    }
+
+    public function test_full_flow_admin_approval_pass_entry_and_exit(): void
+    {
+        $guest = $this->guest();
+        $vehicle = $this->guestVehicle();
+        $id = $this->requestToday($vehicle);
+
+        $this->actingAsStaff();
+        $this->postJson("/api/visitors/requests/{$id}/approve")->assertForbidden();
+
+        $this->actingAsAdmin();
+        $this->postJson("/api/visitors/requests/{$id}/approve")->assertOk();
+
+        // The guest is notified and sees one active pass linked to the request.
+        Sanctum::actingAs($guest);
+        $this->assertTrue(DB::table('notifications')->where('user_id', $guest->user_id)->where('notification_type', 'visitor_request_approved')->exists());
+        $passes = $this->getJson('/api/guest/passes')->json('data');
+        $this->assertCount(1, $passes);
+        $this->assertSame('active', $passes[0]['status']);
+        $this->assertSame($id, $passes[0]['request_id']);
+        $code = $passes[0]['pass_code'];
+
+        // Entry and exit with the same pass at the gate (real ParkingAccessService).
+        $this->actingAsStaff();
+        $in = $this->gate('entry', ['qr_pass_code' => $code]);
+        $this->assertSame('granted', $in['status']);
+        $this->assertNotNull($this->activeTransaction($vehicle));
+        $this->assertSame('completed', $this->gate('exit', ['qr_pass_code' => $code])['status']);
+        $this->assertNull($this->activeTransaction($vehicle));
+        $this->assertSame('denied', $this->gate('entry', ['qr_pass_code' => $code])['status']);
+
+        Sanctum::actingAs($guest);
+        $visits = $this->getJson('/api/guest/visits')->json('data');
+        $this->assertCount(1, $visits);
+        $this->assertSame('completed', $visits[0]['status']);
+        $this->assertSame('used', $this->getJson('/api/guest/passes')->json('data.0.status'));
+    }
+
+    public function test_admin_rejection_notifies_guest_and_issues_no_pass(): void
+    {
+        $guest = $this->guest();
+        $id = $this->requestToday($this->guestVehicle());
+
+        $this->actingAsAdmin();
+        $this->postJson("/api/visitors/requests/{$id}/reject", ['remarks' => 'Office closed that day'])->assertOk();
+
+        Sanctum::actingAs($guest);
+        $request = $this->getJson('/api/guest/requests')->json('data.0');
+        $this->assertSame('rejected', $request['request_status']);
+        $this->assertSame('Office closed that day', $request['review_remarks']);
+        $this->assertNull($request['pass']);
+        $this->assertTrue(DB::table('notifications')->where('user_id', $guest->user_id)->where('notification_type', 'visitor_request_rejected')->exists());
+    }
+
+    public function test_request_whose_visit_has_ended_cannot_be_approved_and_expired_pass_is_denied(): void
+    {
+        $this->guest();
+        $late = $this->requestToday($this->guestVehicle(), 1);
+        $vehicle2 = $this->guestVehicle();
+        $approved = $this->requestToday($vehicle2, 1);
+
+        $this->actingAsAdmin();
+        $pass = $this->postJson("/api/visitors/requests/{$approved}/approve")->assertOk()->json('pass');
+
+        $this->travel(26)->hours();
+        $this->postJson("/api/visitors/requests/{$late}/approve")->assertStatus(409);
+        $r = $this->gate('entry', ['qr_pass_code' => $pass['pass_code']]);
+        $this->assertSame('denied', $r['status']);
+        $this->assertSame('Visitor QR pass has expired.', $r['reason']);
+    }
+
+    public function test_guest_can_update_profile_and_cancel_a_pending_request(): void
+    {
+        $guest = $this->guest();
+        $id = $this->requestToday($this->guestVehicle());
+
+        $this->patchJson('/api/guest/profile', ['full_name' => 'Ana Reyes', 'contact_number' => '09998887777', 'affiliation' => 'ACME'])->assertOk();
+        $this->assertSame('Reyes', DB::table('visitors')->where('user_id', $guest->user_id)->value('last_name'));
+
+        $this->postJson("/api/guest/requests/{$id}/cancel")->assertOk();
+        $this->assertSame('cancelled', DB::table('visitor_requests')->where('request_id', $id)->value('request_status'));
+    }
+
+    public function test_demo_seeder_is_repeatable(): void
+    {
+        $this->seed(GuestDemoSeeder::class);
+        $counts = fn () => [DB::table('users')->count(), DB::table('visitors')->count(), DB::table('vehicles')->count(), DB::table('visitor_requests')->count(), DB::table('qr_passes')->count()];
+        $first = $counts();
+        $this->seed(GuestDemoSeeder::class);
+
+        $this->assertSame($first, $counts());
+        $user = User::where('email', 'guest.demo@pass.test')->firstOrFail();
+        $this->assertTrue(Hash::check('GuestDemo@2026!', $user->password));
+        $visitor = DB::table('visitors')->where('user_id', $user->user_id)->first();
+        $this->assertSame('pending', DB::table('visitor_requests')->where('visitor_id', $visitor->visitor_id)->value('request_status'));
+        $this->assertFalse(DB::table('qr_passes')->where('visitor_id', $visitor->visitor_id)->exists());
+    }
+}

@@ -269,8 +269,10 @@ $firstName = implode(' ', $nameParts);
                     )->first();
 
                     if ($role) {
+                        // Set assigned_at here: the column's MySQL default would
+                        // use the server's Manila clock, not UTC like the app.
                         $user->roles()->syncWithoutDetaching([
-                            $role->role_id,
+                            $role->role_id => ['assigned_at' => now()],
                         ]);
                     }
                 }
@@ -291,6 +293,8 @@ $vehicle = Vehicle::create([
 // active_flag is a generated column, so it is not set here.
 $vehicle->authorizations()->create([
     'authorization_status' => 'pending',
+    // Explicit UTC time; the column's MySQL default uses the server's Manila clock.
+    'requested_at' => now(),
 ]);
 
 

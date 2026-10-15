@@ -57,6 +57,40 @@ class ParkingStats
         return $areas;
     }
 
+    /**
+     * Vehicles currently inside, from active parking transactions (including
+     * vehicles that entered on earlier days), and whether every active stay
+     * holds exactly one distinct slot. "consistent" is what Dashboard, Occupancy
+     * Monitor and Parking Layout rely on: inside = active stays = slots held.
+     */
+    public static function inside(): array
+    {
+        $row = DB::table('parking_transactions as t')
+            ->leftJoin('parking_areas as a', 'a.parking_area_id', '=', 't.parking_area_id')
+            ->where('t.transaction_status', 'active')
+            ->selectRaw("COUNT(*) as total,
+                COUNT(t.slot_id) as with_slot,
+                COUNT(DISTINCT t.slot_id) as distinct_slots,
+                SUM(a.area_code = 'CAR') as cars,
+                SUM(a.area_code = 'MC') as motorcycles,
+                COUNT(DISTINCT t.visitor_id) as visitors,
+                SUM(t.slot_confirmed_at IS NULL) as unconfirmed")
+            ->first();
+
+        $total = (int) $row->total;
+
+        return [
+            'total' => $total,
+            'cars' => (int) $row->cars,
+            'motorcycles' => (int) $row->motorcycles,
+            'visitors' => (int) $row->visitors,
+            'awaiting_confirmation' => (int) $row->unconfirmed,
+            'with_slot' => (int) $row->with_slot,
+            'distinct_slots' => (int) $row->distinct_slots,
+            'consistent' => $total === (int) $row->with_slot && $total === (int) $row->distinct_slots,
+        ];
+    }
+
     public static function area(int $areaId): ?array
     {
         return self::areas()[$areaId] ?? null;
