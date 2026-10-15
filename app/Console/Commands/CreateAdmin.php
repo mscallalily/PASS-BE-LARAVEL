@@ -54,7 +54,7 @@ class CreateAdmin extends Command
                 'last_name' => 'Administrator',
             ]);
 
-            $user->roles()->attach($role->role_id);
+            $user->roles()->attach($role->role_id, ['assigned_at' => now()]);
         });
 
         $this->info("Admin created: {$email} ({$code})");

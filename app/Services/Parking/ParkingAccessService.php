@@ -630,9 +630,12 @@ class ParkingAccessService
 
     private function useQrPass(int $passId): void
     {
+        // MySQL applies SET assignments left to right, so pass_status must be
+        // computed before use_count changes (otherwise the entry scan of a
+        // two-use pass already marks it used).
         DB::table('qr_passes')->where('qr_pass_id', $passId)->update([
-            'use_count' => DB::raw('LEAST(use_count + 1, 255)'),
             'pass_status' => DB::raw("IF(use_count + 1 >= max_uses AND pass_status = 'active', 'used', pass_status)"),
+            'use_count' => DB::raw('LEAST(use_count + 1, 255)'),
             'updated_at' => now(),
         ]);
     }
@@ -691,12 +694,13 @@ class ParkingAccessService
 
         $eventId = $this->recordEvent($id, $direction, false, $reason, $actor, ['gate_id' => $gateId] + $context, $at, $vehicle->area_id ?? null);
 
+        $title = self::denialTitle($id, $reason, $direction);
         $this->afterCommit[] = fn () => ParkingNotifier::notifyStaff(
             'parking_access_denied',
-            "{$verb} denied",
+            $title,
             "{$verb} denied for {$label} at " . CampusTime::label($at) . ": {$reason}",
             'access_event', $eventId,
-            ['access_event_id' => $eventId, 'plate_number' => $vehicle->plate_number ?? null, 'reason' => $reason],
+            ['access_event_id' => $eventId, 'plate_number' => $vehicle->plate_number ?? null, 'reason' => $reason, 'method' => $id['method']],
             'vehicle:' . ($vehicle->vehicle_id ?? $id['credential']), 15
         );
 
@@ -707,6 +711,18 @@ class ParkingAccessService
             'access_event_id' => $eventId,
             'plate_number' => $vehicle->plate_number ?? null,
         ];
+    }
+
+    /** Staff alert title for a refused scan: what kind of problem it was. */
+    private static function denialTitle(array $id, string $reason, string $direction): string
+    {
+        return match (true) {
+            str_contains($reason, 'suspended') => 'Suspended vehicle entry attempt',
+            !$id['vehicle'] || str_contains($reason, 'not registered') || str_contains($reason, 'not linked') || str_contains($reason, 'Unknown') => 'Unauthorized vehicle',
+            $id['method'] === 'qr' => $direction === 'out' ? 'Denied visitor QR exit' : 'Denied visitor QR access',
+            $id['method'] === 'rfid' => $direction === 'out' ? 'Denied RFID exit' : 'Denied RFID access',
+            default => $direction === 'out' ? 'Exit denied' : 'Entry denied',
+        };
     }
 
     private function recordEvent(array $id, string $direction, bool $granted, ?string $reason, ?User $actor, array $context, CarbonImmutable $at, ?int $areaId): int

@@ -52,6 +52,7 @@ class ParkingOperationsController extends Controller
             'areas' => array_values($areas),
             'overall' => ParkingStats::overall($areas),
             'hourly' => ParkingStats::hourlyToday(array_keys($areas)),
+            'inside' => ParkingStats::inside(),
             'open_incidents' => DB::table('parking_violations as pv')
                 ->join('violation_types as vt', 'vt.violation_type_id', '=', 'pv.violation_type_id')
                 ->whereIn('vt.violation_code', [ParkingAccessService::WRONG_SLOT, ParkingAccessService::WRONG_AREA])
@@ -157,6 +158,7 @@ class ParkingOperationsController extends Controller
             'extra_bays' => $extraBays,
             'areas' => array_values($areas),
             'overall' => ParkingStats::overall($areas),
+            'inside' => ParkingStats::inside(),
             'ambiguities' => ParkingMapLayout::ambiguities(),
             'corrections' => ParkingMapLayout::corrections(),
             'generated_at' => now()->toIso8601String(),
@@ -191,9 +193,12 @@ class ParkingOperationsController extends Controller
                 DB::raw("COALESCE(NULLIF(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), ''), NULLIF(TRIM(CONCAT_WS(' ', vis.first_name, vis.last_name)), '')) as party_name"),
             ]);
 
-        // Unresolved wrong-slot incidents (vehicle observed here, or assigned here).
+        // Unresolved wrong-slot incidents (vehicle observed here, or assigned here)
+        // for vehicles still parked. Incidents whose vehicle has exited stay open in
+        // Violations but no longer mark a slot on the map.
         $incidents = DB::table('parking_violations as pv')
             ->join('violation_types as vt', 'vt.violation_type_id', '=', 'pv.violation_type_id')
+            ->join('parking_transactions as it', fn ($j) => $j->on('it.transaction_id', '=', 'pv.parking_transaction_id')->where('it.transaction_status', 'active'))
             ->leftJoin('vehicles as v', 'v.vehicle_id', '=', 'pv.vehicle_id')
             ->leftJoin('parking_slots as obs', 'obs.slot_id', '=', 'pv.slot_id')
             ->leftJoin('parking_slots as exp', 'exp.slot_id', '=', 'pv.expected_slot_id')
@@ -310,6 +315,16 @@ class ParkingOperationsController extends Controller
             $query->where('t.parking_area_id', $area);
         }
 
+        if (in_array($method = $request->query('method'), ['rfid', 'qr', 'manual'], true)) {
+            $query->where('t.access_method', $method);
+        }
+
+        if ($category = $request->query('category')) {
+            $category === 'visitor'
+                ? $query->whereNotNull('t.visitor_id')
+                : $query->where('u.user_type', $category);
+        }
+
         if (in_array($status = $request->query('status'), ['active', 'completed', 'force_closed', 'cancelled'], true)) {
             $query->where('t.transaction_status', $status);
         }
@@ -348,6 +363,8 @@ class ParkingOperationsController extends Controller
                 'party_type' => $row->party_type,
                 'party_name' => $row->party_name,
                 'owner_code' => $row->owner_code,
+                // Student / faculty / employee for campus users, visitor for guests.
+                'user_category' => $row->party_type === 'visitor' ? 'visitor' : $row->user_type,
                 'slot_id' => $row->slot_id,
                 'slot_code' => $row->slot_code,
                 'parking_area_id' => $row->parking_area_id,
@@ -380,7 +397,7 @@ class ParkingOperationsController extends Controller
             ->select([
                 't.transaction_id', 't.ticket_number', 't.slot_id', 't.parking_area_id', 't.entry_datetime', 't.exit_datetime',
                 't.duration_minutes', 't.access_method', 't.transaction_status', 't.slot_confirmed_at',
-                'v.plate_number', 'vt.type_name as vehicle_type', 's.slot_code', 'a.area_name as parking_area', 'u.user_code as owner_code',
+                'v.plate_number', 'vt.type_name as vehicle_type', 's.slot_code', 'a.area_name as parking_area', 'u.user_code as owner_code', 'u.user_type',
                 DB::raw("CASE WHEN t.visitor_id IS NOT NULL THEN 'visitor' ELSE 'user' END as party_type"),
                 DB::raw("COALESCE(NULLIF(TRIM(CONCAT_WS(' ', d.first_name, d.last_name)), ''), NULLIF(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), ''), NULLIF(TRIM(CONCAT_WS(' ', vis.first_name, vis.last_name)), '')) as party_name"),
                 DB::raw("(SELECT pv.violation_id FROM parking_violations pv WHERE pv.parking_transaction_id = t.transaction_id AND pv.violation_status IN ('open', 'under_review') ORDER BY pv.violation_id DESC LIMIT 1) as open_incident_id"),
