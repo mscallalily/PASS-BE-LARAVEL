@@ -515,7 +515,7 @@ $licenseId = DB::table('driver_licenses')->insertGetId([
             'attempted_at' => now(),
         ]);
     }
-}
+
 
 public function forgotPassword(Request $request): JsonResponse
 {
