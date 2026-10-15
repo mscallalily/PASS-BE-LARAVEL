@@ -21,6 +21,10 @@ class DriverLicense extends Model
         'issuing_agency',
         'license_image_path',
         'license_status',
+        'review_status',
+        'review_notes',
+        'reviewed_by',
+        'reviewed_at',
     ];
 
     protected function casts(): array
@@ -28,6 +32,7 @@ class DriverLicense extends Model
         return [
             'issue_date' => 'date',
             'expiry_date' => 'date',
+            'reviewed_at' => 'datetime',
         ];
     }
 
