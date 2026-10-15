@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\RfidReaderController;
 use App\Http\Controllers\Api\AccessEventController;
 use App\Http\Controllers\Api\VisitorAccessController;
 use App\Http\Controllers\Api\DeviceSimulatorController;
+use App\Http\Controllers\Api\AdminDashboardController;
 
 Route::get('/departments', [DepartmentController::class, 'index']);
 
@@ -50,6 +51,15 @@ Route::post('/reset-password', [AuthController::class, 'resetPassword'])
 
 // Authenticated routes
 Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/admin/system-settings', [
+    \App\Http\Controllers\Api\SystemSettingsController::class,
+    'index'
+]);
+
+Route::put('/admin/system-settings', [
+    \App\Http\Controllers\Api\SystemSettingsController::class,
+    'update'
+]);
     Route::get('/me', [AuthController::class, 'me']);
 
     Route::post('/logout', [AuthController::class, 'logout']);
@@ -60,6 +70,10 @@ Route::middleware('auth:sanctum')->group(function () {
         ->whereNumber('id');
     Route::patch('/vehicles/authorizations/{id}/lift-suspension', [VehicleAuthorizationController::class, 'liftSuspension'])
         ->whereNumber('id');
+    Route::get('/admin/audit-logs', [
+    \App\Http\Controllers\Api\AuditLogController::class,
+    'index'
+]);
 
     // Driver's license submissions (separate from vehicle authorization and RFID).
     Route::get('/licenses', [DriverLicenseController::class, 'index']);
@@ -119,7 +133,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Admin user management
     Route::prefix('admin')->group(function () {
+        Route::get('/dashboard', [AdminDashboardController::class, 'index']);
+
         Route::get('/users', [UserManagementController::class, 'index']);
+        
 
         Route::patch(
             '/users/{id}/approve',
