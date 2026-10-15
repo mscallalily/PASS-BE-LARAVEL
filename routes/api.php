@@ -123,6 +123,9 @@ Route::post(
     // Gate access records (read-only) and RFID credentials.
     Route::get('/access-events', [AccessEventController::class, 'index']);
     Route::get('/rfid/assignments', [AccessEventController::class, 'rfidAssignments']);
+    Route::post('/rfid/assignments', [\App\Http\Controllers\Api\RfidAssignmentController::class, 'store'])->middleware('throttle:20,1');
+    Route::patch('/rfid/assignments/{id}/revoke', [\App\Http\Controllers\Api\RfidAssignmentController::class, 'revoke'])->whereNumber('id');
+
 
     // Visitor registration, requests, approval and Visitor QR passes.
     Route::prefix('visitors')->group(function () {
