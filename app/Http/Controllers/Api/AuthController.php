@@ -190,6 +190,8 @@ class AuthController extends Controller
 $lastName = array_pop($nameParts);
 $firstName = implode(' ', $nameParts);
 
+        $storedFiles = [];
+
         try {
             // Store documents on a private disk, not in public storage.
             $schoolIdPath = $request->file('school_id_file')

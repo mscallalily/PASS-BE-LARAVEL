@@ -17,6 +17,8 @@ use App\Http\Controllers\Api\AccessEventController;
 use App\Http\Controllers\Api\VisitorAccessController;
 use App\Http\Controllers\Api\DeviceSimulatorController;
 
+
+
 Route::get('/departments', [DepartmentController::class, 'index']);
 
 Route::post('/register', [AuthController::class, 'register']);
@@ -50,6 +52,29 @@ Route::post('/reset-password', [AuthController::class, 'resetPassword'])
 
 // Authenticated routes
 Route::middleware('auth:sanctum')->group(function () {
+    Route::get(
+    '/vehicles/{id}/photo',
+    [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'photo']
+)->whereNumber('id');
+
+Route::post(
+    '/vehicles/{id}/photo',
+    [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'uploadPhoto']
+)->whereNumber('id');
+
+    Route::patch(
+    '/vehicles/authorizations/{id}/review',
+    [\App\Http\Controllers\Api\VehicleAuthorizationController::class, 'review']
+)->whereNumber('id');
+    Route::get(
+    '/vehicles',
+    [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'index']
+);
+
+Route::post(
+    '/vehicles',
+    [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'store']
+);
     Route::get('/me', [AuthController::class, 'me']);
 
     Route::post('/logout', [AuthController::class, 'logout']);
