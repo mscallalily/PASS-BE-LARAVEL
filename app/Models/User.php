@@ -43,6 +43,25 @@ class User extends Authenticatable
             ->withPivot('assigned_at', 'assigned_by');
     }
 
+    /**
+     * Active administrators and parking/security staff.
+     */
+    public function canManageParking(): bool
+    {
+        if ($this->account_status !== 'active') {
+            return false;
+        }
+
+        if (in_array($this->user_type, ['security', 'admin'], true)) {
+            return true;
+        }
+
+        return $this->roles()
+            ->whereIn('role_code', ['admin', 'parking_admin', 'security'])
+            ->where('is_active', true)
+            ->exists();
+    }
+
     public function vehicles(): HasMany
     {
         return $this->hasMany(Vehicle::class, 'owner_user_id', 'user_id');

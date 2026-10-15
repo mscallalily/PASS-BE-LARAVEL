@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\ProcessLicenseVerification;
 use App\Models\Department;
 use App\Models\Role;
 use App\Models\User;
@@ -12,8 +13,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Storage;
 use Throwable;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
@@ -216,6 +217,10 @@ $firstName = implode(' ', $nameParts);
                 $storedFiles[] = $licensePath;
             }
 
+            // Set when a license is saved, so its automatic check runs after commit.
+            $licenseId = null;
+            $licenseRunId = (string) Str::uuid();
+
             $user = DB::transaction(function () use (
                 $data,
                 $hasVehicle,
@@ -224,7 +229,10 @@ $firstName = implode(' ', $nameParts);
                 $firstName,
                 $lastName,
                 $schoolIdPath,
-                $licensePath
+                $licensePath,
+                $licenseRunId,
+                $request,
+                &$licenseId
             ) {
                 // Create the account as pending. Do not auto-approve it.
                 $user = User::create([
@@ -267,7 +275,7 @@ $firstName = implode(' ', $nameParts);
                 }
 
                 if ($hasVehicle) {
-
+                    
 
 $vehicle = Vehicle::create([
     'owner_user_id' => $user->user_id,
@@ -279,9 +287,9 @@ $vehicle = Vehicle::create([
     'registration_status' => 'registered',
 ]);
 
+// active_flag is a generated column, so it is not set here.
 $vehicle->authorizations()->create([
     'authorization_status' => 'pending',
-    'active_flag' => true,
 ]);
 
 
@@ -299,8 +307,8 @@ $vehicle->authorizations()->create([
                     ], 'driver_id');
 
                     // Save the driver's license details and private file path.
-
-DB::table('driver_licenses')->insert([
+                    
+$licenseId = DB::table('driver_licenses')->insertGetId([
     'driver_id' => $driverId,
     'license_number' => $data['license_number'],
     'license_type' => $data['license_type'],
@@ -309,11 +317,15 @@ DB::table('driver_licenses')->insert([
     'expiry_date' => $data['license_expiry'],
     'issuing_agency' => null,
     'license_image_path' => $licensePath,
+    'original_file_name' => Str::limit($request->file('license_file')->getClientOriginalName(), 250, ''),
     'license_status' => 'valid',
-    'current_flag' => true,
+    'verification_status' => 'processing',
+    'verification_source' => 'automatic',
+    'verification_run_id' => $licenseRunId,
+    'submitted_at' => now(),
     'created_at' => now(),
     'updated_at' => now(),
-]);
+], 'license_id');
 
 
                     // Link the vehicle to the registered driver.
@@ -331,6 +343,15 @@ DB::table('driver_licenses')->insert([
 
                 return $user;
             });
+
+            // The registration is saved; a failure in the document check must not undo it.
+            if ($licenseId) {
+                try {
+                    ProcessLicenseVerification::dispatch($licenseId, $licenseRunId);
+                } catch (Throwable $exception) {
+                    report($exception);
+                }
+            }
 
             return response()->json([
                 'message' =>
@@ -480,83 +501,4 @@ DB::table('driver_licenses')->insert([
             'attempted_at' => now(),
         ]);
     }
-
-public function forgotPassword(Request $request): JsonResponse
-{
-    $data = $request->validate([
-        'email' => ['required', 'email', 'max:255'],
-    ]);
-
-    $status = Password::sendResetLink([
-        'email' => $data['email'],
-    ]);
-
-    // Avoid revealing whether an email exists in the database.
-    if ($status === Password::RESET_LINK_SENT ||
-        $status === Password::INVALID_USER) {
-        return response()->json([
-            'message' =>
-                'If an account exists for that email, a password reset link will be sent.',
-        ]);
-    }
-
-    if ($status === Password::RESET_THROTTLED) {
-        return response()->json([
-            'message' =>
-                'Please wait before requesting another reset link.',
-        ], 429);
-    }
-
-    report(new \RuntimeException(
-        'Password reset link could not be sent: ' . $status
-    ));
-
-    return response()->json([
-        'message' =>
-            'Unable to process your request right now. Please try again later.',
-    ], 500);
-}
-
-public function resetPassword(Request $request): JsonResponse
-{
-    $data = $request->validate([
-        'token' => ['required', 'string'],
-        'email' => ['required', 'email', 'max:255'],
-        'password' => ['required', 'string', 'min:8', 'confirmed'],
-    ]);
-
-    $status = Password::reset(
-        $data,
-        function (User $user, string $password): void {
-            // The User model's "hashed" cast hashes the new password.
-            $user->forceFill([
-                'password' => $password,
-                'remember_token' => Str::random(60),
-            ])->save();
-
-            // Revoke existing API sessions after a password change.
-            $user->tokens()->delete();
-        }
-    );
-
-    if ($status === Password::PASSWORD_RESET) {
-        return response()->json([
-            'message' => 'Your password has been reset successfully.',
-        ]);
-    }
-
-    return response()->json([
-        'message' => match ($status) {
-            Password::INVALID_USER =>
-                'Unable to reset the password for this account.',
-            Password::INVALID_TOKEN =>
-                'This reset link is invalid or has expired. Please request a new one.',
-            Password::RESET_THROTTLED =>
-                'Please wait before trying again.',
-            default =>
-                'Unable to reset your password. Please request a new link.',
-        },
-    ], 422);
-}
-
 }

@@ -22,7 +22,6 @@ protected $fillable = [
     'reviewed_by',
     'reviewed_at',
     'remarks',
-    'active_flag',
 ];
 
 

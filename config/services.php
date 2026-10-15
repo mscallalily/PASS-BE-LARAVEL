@@ -14,6 +14,14 @@ return [
     |
     */
 
+    // Driver's license document checks. OCR is preliminary only: there is no
+    // official LTO verification service integrated, so staff confirm authenticity.
+    'license_ocr' => [
+        'tesseract_path' => env('TESSERACT_PATH', 'tesseract'),
+        'pdftotext_path' => env('PDFTOTEXT_PATH'),
+        'timeout' => (int) env('LICENSE_OCR_TIMEOUT', 60),
+    ],
+
     'postmark' => [
         'token' => env('POSTMARK_TOKEN'),
     ],
