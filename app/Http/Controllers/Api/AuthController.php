@@ -346,12 +346,15 @@ $licenseId = DB::table('driver_licenses')->insertGetId([
             });
 
             // The registration is saved; a failure in the document check must not undo it.
+        
             if ($licenseId) {
                 try {
                     ProcessLicenseVerification::dispatch($licenseId, $licenseRunId);
                 } catch (Throwable $exception) {
                     report($exception);
                 }
+            }
+
             // Send verification email after the database transaction succeeds.
             $emailVerificationSent = false;
 
@@ -378,11 +381,11 @@ $licenseId = DB::table('driver_licenses')->insertGetId([
             report($exception);
 
             return response()->json([
-                'message' =>
-                    'Registration could not be completed. Please try again.',
+                'message' => 'Registration could not be completed. Please try again.',
             ], 500);
         }
     }
+
 
     public function login(Request $request): JsonResponse
     {
