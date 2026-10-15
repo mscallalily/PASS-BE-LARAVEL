@@ -47,6 +47,55 @@ class ParkingNotifier
         ?string $dedupeKey = null,
         int $dedupeMinutes = 0,
     ): bool {
+        return self::notifyUsers(self::staffUserIds(), $type, $title, $body, $relatedType, $relatedId, $payload, $dedupeKey, $dedupeMinutes);
+    }
+
+    /**
+     * @return int[] Active administrators (admin user type, or admin / parking_admin role).
+     */
+    public static function adminUserIds(): array
+    {
+        return DB::table('users as u')
+            ->where('u.account_status', 'active')
+            ->whereNull('u.deleted_at')
+            ->where(fn ($q) => $q->where('u.user_type', 'admin')
+                ->orWhereExists(fn ($sub) => $sub->selectRaw('1')->from('user_roles as ur')
+                    ->join('roles as r', 'r.role_id', '=', 'ur.role_id')
+                    ->whereColumn('ur.user_id', 'u.user_id')
+                    ->where('r.is_active', true)
+                    ->whereIn('r.role_code', ['admin', 'parking_admin'])))
+            ->pluck('u.user_id')
+            ->all();
+    }
+
+    public static function notifyAdmins(string $type, string $title, string $body, string $relatedType, int $relatedId, array $payload = []): bool
+    {
+        return self::notifyUsers(self::adminUserIds(), $type, $title, $body, $relatedType, $relatedId, $payload);
+    }
+
+    /** Notify one account (e.g. a guest about their visitor request). */
+    public static function notifyUser(int $userId, string $type, string $title, string $body, string $relatedType, int $relatedId, array $payload = []): bool
+    {
+        return self::notifyUsers([$userId], $type, $title, $body, $relatedType, $relatedId, $payload);
+    }
+
+    /**
+     * Notify the given accounts, unless an identical alert (same type and
+     * dedupe key) was sent within $dedupeMinutes.
+     *
+     * @param  int[]  $userIds
+     */
+    public static function notifyUsers(
+        array $userIds,
+        string $type,
+        string $title,
+        string $body,
+        string $relatedType,
+        int $relatedId,
+        array $payload = [],
+        ?string $dedupeKey = null,
+        int $dedupeMinutes = 0,
+    ): bool {
         $payload['dedupe_key'] = $dedupeKey ?? "{$relatedType}:{$relatedId}";
 
         if ($dedupeMinutes > 0) {
@@ -74,7 +123,7 @@ class ParkingNotifier
             'sent_at' => now(),
             'created_at' => now(),
             'updated_at' => now(),
-        ], self::staffUserIds());
+        ], array_values(array_unique($userIds)));
 
         if ($rows) {
             DB::table('notifications')->insert($rows);

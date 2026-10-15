@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Services\Parking\ParkingAccessService;
+use App\Services\Parking\ParkingNotifier;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -86,6 +88,9 @@ class ViolationController extends Controller
             $row->reported_at = ParkingOperationsController::iso($row->reported_at);
             $row->resolved_at = ParkingOperationsController::iso($row->resolved_at);
             $row->is_slot_incident = in_array($row->violation_code, self::SLOT_TYPES, true);
+            // An unresolved incident stays open after the vehicle exits; staff then
+            // resolve or dismiss it without a slot change.
+            $row->session_ended = $row->parking_transaction_id !== null && $row->transaction_status !== 'active';
             return $row;
         });
 
@@ -187,7 +192,22 @@ class ViolationController extends Controller
 
         $actor = $request->user();
 
-        return DB::transaction(function () use ($id, $data, $actor, $request) {
+        // Lock order is the same as gate entry (ParkingAccessService): parking
+        // area, then parking session, then the violation. Read the ids first.
+        $peek = DB::table('parking_violations')->where('violation_id', $id)->first(['parking_transaction_id', 'slot_id']);
+        $reassigning = $data['action'] === 'resolve' && ($data['resolution'] ?? null) === 'reassigned';
+        $targetArea = $reassigning && $peek?->slot_id
+            ? DB::table('parking_slots as s')->join('parking_zones as z', 'z.zone_id', '=', 's.zone_id')->where('s.slot_id', $peek->slot_id)->value('z.parking_area_id')
+            : null;
+
+        return DB::transaction(function () use ($id, $data, $actor, $request, $peek, $targetArea) {
+            if ($targetArea) {
+                DB::table('parking_areas')->where('parking_area_id', $targetArea)->lockForUpdate()->first();
+            }
+            if ($peek?->parking_transaction_id) {
+                DB::table('parking_transactions')->where('transaction_id', $peek->parking_transaction_id)->lockForUpdate()->first();
+            }
+
             $violation = DB::table('parking_violations as pv')
                 ->join('violation_types as vt', 'vt.violation_type_id', '=', 'pv.violation_type_id')
                 ->where('pv.violation_id', $id)->lockForUpdate()->first(['pv.*', 'vt.violation_code']);
@@ -238,12 +258,13 @@ class ViolationController extends Controller
         });
     }
 
+    /** Runs inside update()'s transaction, after the area and session rows are locked. */
     private function applySlotResolution(object $violation, string $resolution, int $actorId): array
     {
         $txn = DB::table('parking_transactions')->where('transaction_id', $violation->parking_transaction_id)->lockForUpdate()->first();
 
         if (!$txn || $txn->transaction_status !== 'active') {
-            return ['error' => 'The parking session has ended; resolve without a slot change.'];
+            return ['error' => 'The vehicle has already exited, so there is no slot to change. Resolve or dismiss the incident without a slot change.'];
         }
 
         if ($resolution === 'relocated') {
@@ -254,33 +275,47 @@ class ViolationController extends Controller
         }
 
         $slot = DB::table('parking_slots as s')->join('parking_zones as z', 'z.zone_id', '=', 's.zone_id')
-            ->where('s.slot_id', $violation->slot_id)->lockForUpdate()->first(['s.slot_id', 's.slot_code', 's.slot_status', 'z.parking_area_id']);
-        $vehicleArea = DB::table('vehicles as v')->join('vehicle_types as vt', 'vt.vehicle_type_id', '=', 'v.vehicle_type_id')
-            ->where('v.vehicle_id', $txn->vehicle_id)->value('vt.parking_area_id');
+            ->where('s.slot_id', $violation->slot_id)->lockForUpdate()
+            ->first(['s.slot_id', 's.slot_code', 's.slot_status', 's.vehicle_type_id', 'z.parking_area_id', 'z.vehicle_type_id as zone_type_id']);
+        $vehicle = DB::table('vehicles as v')->join('vehicle_types as vt', 'vt.vehicle_type_id', '=', 'v.vehicle_type_id')
+            ->where('v.vehicle_id', $txn->vehicle_id)->first(['v.vehicle_type_id', 'vt.parking_area_id']);
 
         if (!$slot || $slot->slot_status !== 'available') {
-            return ['error' => 'The observed slot is not available for assignment.'];
+            return ['error' => 'The observed slot is not available for assignment (maintenance or disabled).'];
         }
 
-        if ((int) $slot->parking_area_id !== (int) $vehicleArea) {
-            return ['error' => "Slot {$slot->slot_code} is in a parking area this vehicle type may not use. The vehicle must be moved."];
+        // Same rules as automatic assignment: the vehicle type's area, and a slot/zone that accepts the type.
+        if ((int) $slot->parking_area_id !== (int) $vehicle->parking_area_id
+            || ($slot->zone_type_id && (int) $slot->zone_type_id !== (int) $vehicle->vehicle_type_id)
+            || ($slot->vehicle_type_id && (int) $slot->vehicle_type_id !== (int) $vehicle->vehicle_type_id)) {
+            return ['error' => "Slot {$slot->slot_code} is not for this vehicle type. The vehicle must be moved."];
         }
 
         if (DB::table('parking_transactions')->where('slot_id', $slot->slot_id)->where('transaction_status', 'active')->exists()) {
             return ['error' => "Slot {$slot->slot_code} is assigned to another vehicle."];
         }
 
-        DB::table('parking_transactions')->where('transaction_id', $txn->transaction_id)->update([
-            'slot_id' => $slot->slot_id,
-            'parking_area_id' => $slot->parking_area_id,
-            'slot_confirmed_at' => now(),
-            'slot_confirmed_by' => $actorId,
-            'updated_at' => now(),
-        ]);
+        try {
+            DB::table('parking_transactions')->where('transaction_id', $txn->transaction_id)->update([
+                'slot_id' => $slot->slot_id,
+                'parking_area_id' => $slot->parking_area_id,
+                'slot_confirmed_at' => now(),
+                'slot_confirmed_by' => $actorId,
+                'updated_at' => now(),
+            ]);
+        } catch (UniqueConstraintViolationException) {
+            // The database's one-active-stay-per-slot index caught a conflict.
+            ParkingNotifier::notifyStaff(
+                'parking_slot_conflict', 'Parking slot conflict',
+                "Slot {$slot->slot_code} was assigned to another vehicle while staff were reassigning a vehicle to it. The reassignment was not saved.",
+                'parking_slot', (int) $slot->slot_id, ['slot_code' => $slot->slot_code], "slot:{$slot->slot_id}:conflict", 5
+            );
+
+            return ['error' => "Slot {$slot->slot_code} was just assigned to another vehicle. Choose another resolution."];
+        }
 
         return ['note' => "Assignment moved to observed slot {$slot->slot_code} (confirmed)."];
     }
-
     private function audit(Request $request, int $id, string $action, string $from, string $to, ?string $remarks = null): void
     {
         DB::table('audit_logs')->insert([
