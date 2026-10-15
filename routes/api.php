@@ -1,7 +1,10 @@
 <?php
 
+use App\Http\Controllers\Api\ResendEmailVerificationController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\DriverLicenseController;
+use App\Http\Controllers\Api\DepartmentController;
+use App\Http\Controllers\Api\EmailVerificationController;
 use App\Http\Controllers\Api\UserManagementController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\ParkingDashboardController;
@@ -16,6 +19,8 @@ use App\Http\Controllers\Api\DeviceSimulatorController;
 use App\Http\Controllers\Api\GuestAccountController;
 use App\Http\Controllers\Api\SyncController;
 
+Route::get('/departments', [DepartmentController::class, 'index']);
+
 Route::post('/register', [AuthController::class, 'register']);
 
 // Guest (visitor) self-registration.
@@ -26,6 +31,19 @@ Route::post('/guest/register', [GuestAccountController::class, 'register'])
 Route::post('/devices/rfid/scan', [RfidReaderController::class, 'scan'])
     ->middleware('throttle:120,1');
 
+// Email verification
+Route::get(
+    '/email/verify/{id}/{hash}',
+    [EmailVerificationController::class, 'verify']
+)
+    ->middleware(['signed', 'throttle:10,1'])
+    ->name('verification.verify');
+Route::post(
+    '/email/verification-notification',
+    ResendEmailVerificationController::class
+)->middleware('throttle:5,1');
+
+// Login
 Route::post('/login', [AuthController::class, 'login'])
     ->middleware('throttle:10,1');
 
@@ -36,6 +54,7 @@ Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])
 Route::post('/reset-password', [AuthController::class, 'resetPassword'])
     ->middleware('throttle:5,1');
 
+// Authenticated routes
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
 
@@ -119,6 +138,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('/notifications/{id}/read', [NotificationController::class, 'markRead'])->whereNumber('id');
     Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead']);
 
+    // Admin user management
     Route::prefix('admin')->group(function () {
         Route::get('/users', [UserManagementController::class, 'index']);
 
