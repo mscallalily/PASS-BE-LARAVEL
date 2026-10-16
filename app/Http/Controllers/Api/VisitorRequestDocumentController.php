@@ -9,6 +9,15 @@ use Illuminate\Support\Facades\Storage;
 
 class VisitorRequestDocumentController extends Controller
 {
+    public function check(Request $request, int $id, \App\Services\Parking\VisitorDocumentCheck $checker)
+    {
+        abort_unless($request->user()->canManageParking(), 403);
+        $row = DB::table('visitor_requests')->where('request_id', $id)->first();
+        abort_unless($row, 404);
+        $plate = DB::table('vehicles')->where('vehicle_id', $row->vehicle_id)->value('plate_number') ?? '';
+        return response()->json($checker->check($row, $plate))->header('Cache-Control', 'private, no-store');
+    }
+
     public function show(Request $request, int $id, string $kind)
     {
         abort_unless(in_array($kind, ['license', 'vehicle'], true), 404);
