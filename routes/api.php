@@ -145,6 +145,10 @@ Route::post(
 
     Route::get('/visitors/requests/{id}/documents/{kind}', [\App\Http\Controllers\Api\VisitorRequestDocumentController::class, 'show'])->whereNumber('id')->whereIn('kind', ['license', 'vehicle']);
 
+    Route::get('/vehicle-releases', [\App\Http\Controllers\Api\VehicleReleaseController::class, 'index']);
+    Route::post('/vehicle-releases', [\App\Http\Controllers\Api\VehicleReleaseController::class, 'store'])->middleware('throttle:10,1,vehicle-release:');
+    Route::post('/vehicle-releases/{id}/action', [\App\Http\Controllers\Api\VehicleReleaseController::class, 'act'])->whereNumber('id');
+
     // Guest (visitor) account: own profile, vehicles, requests, passes and visits only.
     Route::prefix('guest')->group(function () {
         Route::get('/profile', [GuestAccountController::class, 'profile']);

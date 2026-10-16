@@ -228,6 +228,13 @@ class ParkingAccessService
                 return ['status' => 'not_inside', 'message' => "{$vehicle->plate_number} has no active parking session."];
             }
 
+            $release = DB::table('vehicle_release_requests')->where('transaction_id', $transaction->transaction_id)
+                ->whereIn('status', ['pending', 'approved'])->where('expires_at', '>', $at)
+                ->lockForUpdate()->first();
+            if ($release && ((int) ($context['emergency_release_id'] ?? 0) !== (int) $release->release_id || $release->status !== 'approved')) {
+                return $this->deny($id, 'An emergency driver release is pending for this session. Complete the Emergency Vehicle Release process or cancel it before a regular exit.', 'out', $actor, $context, $at);
+            }
+
             $eventId = $this->recordEvent($id, 'out', true, null, $actor, $context, $at, $transaction->parking_area_id);
 
             DB::table('parking_transactions')->where('transaction_id', $transaction->transaction_id)->update([
@@ -776,6 +783,7 @@ class ParkingAccessService
                 'staff_override' => $id['method'] === 'manual' ? true : null,
                 // Where the scan came from: staff gate screen, RFID reader, or the development simulator.
                 'source' => $context['source'] ?? null,
+                'emergency_release_id' => $context['emergency_release_id'] ?? null,
             ])),
             'processed_by_user_id' => $actor?->user_id,
             'created_at' => $at,
