@@ -54,7 +54,14 @@ class AuditLogController extends Controller
 
         $logs = $query
             ->orderByDesc('created_at')
-            ->paginate(20);
+            ->paginate(20)
+            ->through(function ($row) {
+                foreach (['old_values', 'new_values'] as $field) {
+                    if (is_string($row->$field)) $row->$field = json_decode($row->$field, true);
+                    if (!is_array($row->$field)) $row->$field = null;
+                }
+                return $row;
+            });
 
         return response()->json($logs);
     }

@@ -11,7 +11,8 @@ class StagingMergeTest extends ParkingTestCase
         $this->actingAsAdmin();
         $this->getJson('/api/admin/dashboard')->assertOk()->assertJsonStructure(['summary' => ['total_users', 'total_vehicles'], 'today_activity', 'parking_occupancy']);
         $this->getJson('/api/admin/parking/occupancy')->assertOk()->assertJsonPath('overall.capacity', 139);
-        $this->getJson('/api/admin/audit-logs')->assertOk();
+        DB::table('audit_logs')->insert(['actor_label' => 'QA', 'action' => 'merge_test', 'new_values' => json_encode(['status' => 'approved']), 'created_at' => now()]);
+        $this->getJson('/api/admin/audit-logs?search=merge_test')->assertOk()->assertJsonPath('data.0.new_values.status', 'approved');
         $this->getJson('/api/admin/system-settings')->assertOk();
         $this->postJson('/api/admin/system-settings/logo')->assertStatus(501);
         $this->putJson('/api/admin/system-settings', ['system_name' => 'PASS', 'institution_name' => 'DYCI', 'contact_email' => 'test@example.test', 'timezone' => 'Asia/Manila', 'date_format' => 'MM/DD/YYYY'])->assertOk();
