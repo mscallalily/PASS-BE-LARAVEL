@@ -28,4 +28,15 @@ class VisitorDocumentCheckTest extends ParkingTestCase
         $this->actingAsAdmin();
         $this->postJson('/api/visitors/requests/999999/document-check')->assertNotFound();
     }
+    public function test_background_sync_does_not_consume_document_check_limit(): void
+    {
+        $this->actingAsAdmin();
+        for ($i = 0; $i < 8; $i++) {
+            $this->getJson('/api/sync/revision')->assertOk();
+        }
+        for ($i = 0; $i < 6; $i++) {
+            $this->postJson('/api/visitors/requests/999999/document-check')->assertNotFound();
+        }
+        $this->postJson('/api/visitors/requests/999999/document-check')->assertStatus(429);
+    }
 }

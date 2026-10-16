@@ -141,7 +141,7 @@ Route::post(
         Route::post('/passes/{id}/revoke', [VisitorAccessController::class, 'revoke'])->whereNumber('id');
     });
 
-    Route::post('/visitors/requests/{id}/document-check', [\App\Http\Controllers\Api\VisitorRequestDocumentController::class, 'check'])->whereNumber('id')->middleware('throttle:6,1');
+    Route::post('/visitors/requests/{id}/document-check', [\App\Http\Controllers\Api\VisitorRequestDocumentController::class, 'check'])->whereNumber('id')->middleware('throttle:6,1,visitor-document-check:');
 
     Route::get('/visitors/requests/{id}/documents/{kind}', [\App\Http\Controllers\Api\VisitorRequestDocumentController::class, 'show'])->whereNumber('id')->whereIn('kind', ['license', 'vehicle']);
 
