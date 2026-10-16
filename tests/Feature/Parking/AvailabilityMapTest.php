@@ -22,7 +22,7 @@ class AvailabilityMapTest extends ParkingTestCase
             $this->assertSame([], $map['geometry']['trays']);
             $this->assertSame($staff['overall'], $map['overall']);
             $this->assertCount(139, $map['slots']);
-            $this->assertCount(2, array_filter($map['slots'], fn ($slot) => ! $slot['placed']));
+            $this->assertCount(25, array_filter($map['slots'], fn ($slot) => ! $slot['placed']));
             $this->assertSame('occupied', collect($map['slots'])->firstWhere('slot_code', $entry['slot_code'])['status']);
             $this->assertStringNotContainsString($car['plate'], $response->getContent());
             foreach ($map['slots'] as $slot) {

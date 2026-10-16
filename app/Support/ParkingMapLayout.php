@@ -2,301 +2,164 @@
 
 namespace App\Support;
 
-/**
- * Digital version of the DYCI parking layout reference drawing.
- *
- * Coordinates use the schematic drawing space (758 x 399), not surveyed
- * metres. The map keeps its irregular boundaries, diagonal rows
- * and lanes. Each painted bay is listed in the order printed on the drawing
- * together with its printed label and the PASS slot it is bound to.
- *
- * Binding rules (no physical positions are invented):
- *   - A bay is bound to the slot whose number is printed on it.
- *   - An obvious misprint (a duplicate where exactly one number is missing
- *     between its neighbours) is bound to the missing number and listed in
- *     corrections().
- *   - Other duplicates, the PWD bay, the hatched aisle, and bays numbered
- *     beyond the area's capacity stay drawn but are not PASS slots.
- *   - PASS slots whose number is not printed anywhere have no position
- *     (pos_x = NULL), unless a separately identified proposal places them.
- */
+/** Proposed metric layout, not a surveyed or approved campus capacity plan. */
 class ParkingMapLayout
 {
-    /** The highway beside the gate is outside campus and is not drawn. */
-    public const VIEW_BOX = [40, 0, 720, 400];
+    public const VIEW_BOX = [35, -15, 740, 380];
 
-    /** Stored coordinates are multiplied by this (parking_slots.pos_* are integers). */
+    /** Integer database-coordinate precision; separate from the metric drawing scale. */
     public const SCALE = 10;
 
-    /**
-     * Rows/columns of bays as printed on the drawing.
-     *   first/last: centre of the first and last bay (image px)
-     *   size:       [length along the row, depth across it] (image px)
-     *   labels:     printed text on each bay
-     *   bind:       slot number bound to each bay, or null
-     *   kinds:      optional per-bay kind: pwd | aisle
-     */
-    public static function rows(): array
-    {
-        return [
-            // ------------------------------------------------ Motorcycle Parking
-            [
-                'area' => 'MC', 'name' => 'Row 1-22 (along the IN/OUT road)',
-                'first' => [87.5, 135.0], 'last' => [277.0, 63.0], 'size' => [6.5, 14.0],
-                'labels' => range(1, 22),
-                'bind' => range(1, 22),
-            ],
-            [
-                'area' => 'MC', 'name' => 'Proposed west bank 23-42',
-                'first' => [85.0, 148.0], 'last' => [109.0, 272.0], 'size' => [6.5, 14.0],
-                'labels' => range(23, 42), 'bind' => range(23, 42),
-                'placement_basis' => 'proposed',
-            ],
-            [
-                'area' => 'MC', 'name' => 'Column 43-56',
-                'first' => [133.8, 149.5], 'last' => [173.8, 258.0], 'size' => [6.5, 14.0],
-                'labels' => [43, 44, 45, 46, 49, 48, 49, 50, 51, 53, 53, 54, 55, 56, 56],
-                'bind' => [43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, null],
-            ],
-            [
-                'area' => 'MC', 'name' => 'Column 57-70',
-                'first' => [199.5, 126.3], 'last' => [243.8, 238.0], 'size' => [6.5, 14.0],
-                'labels' => [57, 58, 59, 60, 61, 62, 63, 64, 66, 66, 66, 67, 68, 69, 70],
-                'bind' => [57, 58, 59, 60, 61, 62, 63, 64, 65, 66, null, 67, 68, 69, 70],
-            ],
-            [
-                'area' => 'MC', 'name' => 'Column 71-84',
-                'first' => [269.3, 102.5], 'last' => [315.0, 218.0], 'size' => [6.5, 14.0],
-                'labels' => [71, 72, 73, 74, 75, 76, 77, 79, 78, 79, 70, 81, 81, 82, 83, 84],
-                'bind' => [71, 72, 73, 74, 75, 76, 77, null, 78, 79, 80, 81, null, 82, 83, 84],
-            ],
+    public const UNITS_PER_METRE = 8;
 
-            // ------------------------------------------------------- Car Parking
-            [
-                'area' => 'CAR', 'name' => 'Row 1-21',
-                'first' => [334.9, 49.3], 'last' => [685.7, 105.0], 'size' => [17.0, 24.0],
-                'labels' => range(1, 21),
-                'bind' => range(1, 21),
-            ],
-            [
-                'area' => 'CAR', 'name' => 'Row 22-41 with PWD bay',
-                'first' => [355.7, 106.4], 'last' => [695.0, 167.9], 'size' => [17.2, 24.0],
-                'labels' => [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 39, 41, 'PWD', ''],
-                // The unnumbered PWD bay follows 41, so it is read as slot 42 (accessible).
-                'bind' => [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 39, 41, 42, null],
-                'kinds' => [18 => 'pwd', 19 => 'aisle'],
-            ],
-            [
-                'area' => 'CAR', 'name' => 'Row 43-55',
-                'first' => [382.9, 167.1], 'last' => [635.7, 217.1], 'size' => [18.6, 24.0],
-                'labels' => [43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 54, 55],
-                'bind' => [43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, null, 55],
-            ],
-            [
-                'area' => 'CAR', 'name' => 'Row 56-70 (beyond 55-slot capacity)',
-                'first' => [397.1, 227.1], 'last' => [622.3, 274.3], 'size' => [18.2, 24.0],
-                'labels' => [56, 57, 58, 59, 60, 61, 62, 64, 65, 66, 67, 68, 70],
-                'bind' => array_fill(0, 13, null),
-            ],
-            [
-                'area' => 'CAR', 'name' => 'East column 75-81 (beyond 55-slot capacity)',
-                'first' => [716.5, 112.1], 'last' => [716.5, 254.3], 'size' => [19.4, 16.0],
-                'labels' => [75, 76, 77, 78, 79, 80, 81, 81],
-                'bind' => array_fill(0, 8, null),
-            ],
-            [
-                'area' => 'CAR', 'name' => 'South-east bays 81-84 (beyond 55-slot capacity)',
-                'first' => [672.9, 272.9], 'last' => [718.6, 279.4], 'size' => [14.4, 22.0],
-                'labels' => [81, 82, 83, 84],
-                'bind' => array_fill(0, 4, null),
-            ],
-        ];
+    /** The owner's eight lengths, in the supplied order; bearings are reconstructed. */
+    public const CAR_EDGES = [18.42, 12.04, 2.60, 20.18, 33.37, 3.00, 3.36, 49.26];
+
+    private const CAR_POINTS = [[49.26, 0], [50.5394786145, 18.3755090943], [38.5674419040, 19.6529819909], [38.6800712198, 17.0554226293], [22.2689481670, 28.7988224838], [-0.5080178134, 4.4109828761], [-2.5378816542, 2.2019892619], [0, 0]];
+
+    /** Local metres -> the shared drawing coordinate system. */
+    private static function point(string $area, float $x, float $y): array
+    {
+        $angle = deg2rad($area === 'CAR' ? 10 : -21);
+        $origin = $area === 'CAR' ? [324, 30] : [69, 114];
+        if ($area === 'MC') {
+            $y += 1.53; // The motorcycle parcel begins beyond the separate access road.
+        }
+
+        return [$origin[0] + self::UNITS_PER_METRE * ($x * cos($angle) - $y * sin($angle)), $origin[1] + self::UNITS_PER_METRE * ($x * sin($angle) + $y * cos($angle))];
     }
 
-    /**
-     * Every painted bay with its centre, size, rotation and binding.
-     *
-     * @return array<int, array{area: string, row: string, index: int, x: float, y: float, w: float, h: float, rotation: float, label: string, slot_number: ?int, kind: string, note: ?string}>
-     */
+    private static function rectangle(string $area, float $x, float $y, float $w, float $h): array
+    {
+        return array_map(fn ($p) => self::point($area, ...$p), [[$x, $y], [$x + $w, $y], [$x + $w, $y + $h], [$x, $y + $h]]);
+    }
+
     public static function bays(): array
     {
         $bays = [];
-
-        foreach (self::rows() as $row) {
-            $n = count($row['labels']);
-            [$x1, $y1] = $row['first'];
-            [$x2, $y2] = $row['last'];
-            $dx = $n > 1 ? ($x2 - $x1) / ($n - 1) : 0;
-            $dy = $n > 1 ? ($y2 - $y1) / ($n - 1) : 0;
-            $rotation = rad2deg(atan2($dy, $dx));
-            $capacity = $row['area'] === 'CAR' ? 55 : 84;
-
-            foreach ($row['labels'] as $i => $label) {
-                $bound = $row['bind'][$i];
-                $kind = $row['kinds'][$i] ?? ($bound ? 'slot' : 'unbound');
-                $note = match (true) {
-                    $kind === 'pwd' => 'Accessible (PWD) bay, unnumbered on the drawing'.($bound ? "; read as slot {$bound}" : ''),
-                    $kind === 'aisle' => 'Hatched access aisle',
-                    $bound !== null && (string) $bound !== (string) $label => "Printed \"{$label}\"; read as {$bound} (misprint)",
-                    $bound === null && is_int($label) && $label > $capacity => "Printed \"{$label}\"; beyond the {$capacity}-slot capacity",
-                    $bound === null => "Printed \"{$label}\" again (duplicate number)",
-                    default => null,
-                };
-
-                $bays[] = [
-                    'area' => $row['area'],
-                    'row' => $row['name'],
-                    'index' => $i,
-                    'x' => round($x1 + $dx * $i, 1),
-                    'y' => round($y1 + $dy * $i, 1),
-                    'w' => $bound !== null && $row['area'] === 'CAR' ? ($kind === 'pwd' ? 20.0 : 12.5) : $row['size'][0],
-                    'h' => $bound !== null && $row['area'] === 'CAR' ? 25.0 : $row['size'][1],
-                    'rotation' => round($rotation, 1),
-                    'label' => (string) $label,
-                    'slot_number' => $bound,
-                    'kind' => $kind,
-                    'note' => $note,
-                    'pwd' => $kind === 'pwd',
-                    'placement_basis' => $row['placement_basis'] ?? 'reference_drawing',
-                ];
+        $add = function (string $area, int $number, float $x, float $y, float $w, float $h, string $row, bool $pwd = false) use (&$bays) {
+            [$gx, $gy] = self::point($area, $x + $w / 2, $y + $h / 2);
+            $bays[] = ['area' => $area, 'row' => $row, 'index' => $number - 1, 'x' => round($gx, 3), 'y' => round($gy, 3), 'w' => $w * self::UNITS_PER_METRE, 'h' => $h * self::UNITS_PER_METRE, 'rotation' => $area === 'CAR' ? 10.0 : -21.0, 'label' => (string) $number, 'slot_number' => $number, 'kind' => $pwd ? 'pwd' : 'slot', 'pwd' => $pwd, 'placement_basis' => 'proposed', 'note' => 'Proposed position; physical layout and manoeuvring require campus confirmation.'];
+        };
+        // 28.00 m of bays, 0.40 m end margin and 2.56 m connecting end aisle.
+        // Width: 0.20 + 2.00 + 1.20 + 2.00 + 1.20 + 2.00 + 0.20 = 8.80 m.
+        foreach ([0.2, 3.4, 6.6] as $row => $y) {
+            foreach (range(0, 27) as $column) {
+                $add('MC', $row * 28 + $column + 1, 0.4 + $column, $y, 1.0, 2.0, 'Compact motorcycle row '.($row + 1));
             }
+        }
+        // A conservative car proposal, NOT a maximum-capacity calculation.
+        // Keep the existing C-42 accessible designation; do not change inventory policy.
+        $add('CAR', 42, 7.5, 0, 4.0, 5.0, 'Proposed north row', true);
+        foreach (range(1, 15) as $i) {
+            $add('CAR', $i, 11.5 + ($i - 1) * 2.5, 0, 2.5, 5.0, 'Proposed north row');
+        }
+        foreach (range(16, 25) as $i) {
+            $add('CAR', $i, 12 + ($i - 16) * 2.5, 12.2, 2.5, 5.0, 'Proposed south-west row');
+        }
+        // A separate bank avoids the concave notch; it is not paved over.
+        foreach (range(26, 29) as $i) {
+            $add('CAR', $i, 38.75 + ($i - 26) * 2.5, 12.2, 2.5, 5.0, 'Proposed south-east row');
         }
 
         return $bays;
     }
 
-    /**
-     * Slot code => bay, for bays bound to a PASS slot.
-     */
     public static function slotPositions(): array
     {
         $positions = [];
-
         foreach (self::bays() as $bay) {
-            if ($bay['slot_number'] !== null) {
-                $prefix = $bay['area'] === 'CAR' ? 'C' : 'M';
-                $positions[sprintf('%s-%02d', $prefix, $bay['slot_number'])] = $bay;
-            }
+            $positions[sprintf('%s-%02d', $bay['area'] === 'CAR' ? 'C' : 'M', $bay['slot_number'])] = $bay;
         }
 
         return $positions;
     }
 
-    /**
-     * Static drawing: boundaries, the shared gate and IN/OUT road, internal
-     * lanes with direction arrows, and reference dimension callouts. No occupancy data. The highway outside the
-     * gate is intentionally omitted.
-     */
     public static function geometry(): array
     {
+        $mc = self::rectangle('MC', 0, 0, 30.96, 8.8);
+        $car = array_map(fn ($p) => self::point('CAR', ...$p), self::CAR_POINTS);
+        $clearances = [];
+        foreach ([2.2, 5.4] as $y) {
+            $clearances[] = ['polygon' => self::rectangle('MC', 0.4, $y, 28, 1.2), 'kind' => 'motorcycle_aisle', 'width_m' => 1.2];
+        }
+        $clearances[] = ['polygon' => self::rectangle('MC', 28.4, 0, 2.56, 8.8), 'kind' => 'motorcycle_end_aisle', 'width_m' => 2.56];
+        $clearances[] = ['polygon' => self::rectangle('CAR', 7.5, 6.2, 41.5, 6), 'kind' => 'car_aisle', 'width_m' => 6.0];
+        $clearances[] = ['polygon' => self::rectangle('CAR', 7.5, 5, 4, 1.2), 'kind' => 'walkway', 'width_m' => 1.2];
+
         return [
             'areas' => [
-                ['area' => 'MC', 'polygon' => [[70, 126], [300, 30], [377, 214], [100, 278]], 'label' => 'MOTORCYCLE PARKING (84 SLOTS)', 'label_at' => [196, 116], 'label_angle' => -21, 'sign_at' => [104, 212]],
-                ['area' => 'CAR', 'polygon' => [[318, 33], [746, 86], [746, 302], [642, 284], [404, 328]], 'label' => 'CAR PARKING (55 SLOTS)', 'label_at' => [470, 102], 'label_angle' => 9, 'sign_at' => [540, 46]],
+                ['area' => 'MC', 'polygon' => $mc, 'label' => '84 COMPACT MOTORCYCLE BAYS · PROPOSED', 'label_at' => self::point('MC', 14.2, 9.9), 'label_angle' => -21, 'sign_at' => self::point('MC', 15.48, 10.2)],
+                ['area' => 'CAR', 'polygon' => $car, 'label' => '30 CAR BAYS · PROPOSED', 'label_at' => self::point('CAR', 28, 22.4), 'label_angle' => 10, 'sign_at' => self::point('CAR', 28, -1.4)],
             ],
-            // One shared IN/OUT road from the single gate; entering traffic keeps to the north lane.
-            'road' => ['polygon' => [[66, 104], [296, 16], [302, 30], [72, 124]], 'label' => 'IN / OUT', 'label_at' => [186, 66], 'label_angle' => -21],
-            'gate' => ['at' => [69, 114], 'angle' => -21, 'label' => 'MAIN ENTRANCE / EXIT', 'sublabel' => 'Shared gate for cars and motorcycles', 'label_at' => [128, 24]],
+            'road' => ['polygon' => self::rectangle('MC', 0, -3.06, 30.96, 3.06), 'label' => 'SHARED ACCESS · 3.06 m', 'label_at' => self::point('MC', 15.5, -1.53), 'label_angle' => -21, 'width_m' => 3.06, 'traffic' => 'alternating'],
+            'gate' => ['at' => [69, 114], 'angle' => -21, 'label' => 'MAIN ENTRANCE / EXIT', 'sublabel' => 'Shared controlled access', 'label_at' => [95, 27]],
             'lanes' => [
-                // Road: in (eastbound, north lane) and out (westbound, south lane).
-                ['points' => [[136.5, 82.2], [171, 68.7]], 'kind' => 'road_in'],
-                ['points' => [[228.5, 46.4], [263, 32.9]], 'kind' => 'road_in'],
-                ['points' => [[208.5, 63.5], [174, 77.4]], 'kind' => 'road_out'],
-                ['points' => [[128, 95.9], [93.5, 109.8]], 'kind' => 'road_out'],
-                // From the shared road to each area.
-                ['points' => [[296, 24], [318, 30], [338, 44]], 'kind' => 'to_area', 'label' => 'Cars', 'label_at' => [322, 22], 'label_angle' => 0],
-                ['points' => [[290, 37], [301, 66], [317, 112]], 'kind' => 'to_area', 'label' => 'Motorcycles', 'label_at' => [309, 72], 'label_angle' => 69],
-                // Motorcycle circulation.
-                ['points' => [[279, 228], [234, 114]], 'kind' => 'lane', 'reverse' => true],
-                ['points' => [[209, 248], [167, 138]], 'kind' => 'lane'],
-                ['points' => [[262, 87], [142, 133]], 'kind' => 'lane'],
-                // Car aisles are one-way, westbound.
-                ['points' => [[690, 136], [362, 80]], 'kind' => 'lane'],
-                ['points' => [[640, 192], [380, 139]], 'kind' => 'lane'],
-                ['points' => [[624, 247], [394, 199]], 'kind' => 'lane'],
+                ['points' => [self::point('MC', 6, -1.53), self::point('MC', 10, -1.53)], 'kind' => 'road_in'],
+                ['points' => [self::point('MC', 25, -1.53), self::point('MC', 21, -1.53)], 'kind' => 'road_out'],
+                ['points' => [self::point('MC', 29.68, -1.53), self::point('MC', 29.68, 7.8)], 'kind' => 'to_area'],
+                ['points' => [self::point('MC', 30.96, -1.53), [328, 48], self::point('CAR', 7.5, 9.2)], 'kind' => 'to_area'],
+                ['points' => [self::point('MC', 2, 2.8), self::point('MC', 27.5, 2.8)], 'kind' => 'lane'],
+                ['points' => [self::point('MC', 27.5, 6), self::point('MC', 2, 6)], 'kind' => 'lane'],
+                ['points' => [self::point('CAR', 9, 9.2), self::point('CAR', 47.5, 9.2)], 'kind' => 'lane'],
             ],
+            'circulation' => $clearances,
             'dimensions' => self::referenceDimensions(),
             'measurement_basis' => self::measurementBasis(),
-            'proposed_slot_codes' => array_map(fn ($n) => sprintf('M-%02d', $n), range(23, 42)),
-            // The wedge between the two areas, where the IN/OUT road meets
-            // both of them, is one paved circulation lane (drawn in white on
-            // the reference). No bay touches it.
-            'connector' => ['polygon' => [[294, 14], [334, 26], [364, 190], [340, 190], [300, 30]]],
-            // Landscaped campus ground around the paved facility.
-            'site' => ['polygon' => [[46, 90], [292, 2], [758, 70], [760, 316], [644, 298], [414, 342], [352, 304], [296, 318], [176, 320], [96, 300], [56, 130]]],
-            // Planted islands only where the drawing leaves unused space.
-            // The west bank uses the former decorative island; circulation is unchanged.
-            'islands' => [],
-            // Unmapped inventory is not rendered as invented physical bays.
-            'trays' => [],
+            'proposed_slot_codes' => array_keys(self::slotPositions()),
+            'connector' => ['polygon' => [[299, 14], [333, 28], self::point('CAR', 8, 9.2), self::point('CAR', 3, 9.2), [302, 42]]],
+            'site' => ['polygon' => [[45, 92], [291, -8], [736, 74], [740, 285], [486, 332], [342, 180], [102, 215], [52, 136]]],
+            'islands' => [], 'trays' => [],
         ];
     }
 
-    /**
-     * Where the drawing is ambiguous or disagrees with the system capacity.
-     */
-    public static function ambiguities(): array
-    {
-        return [
-            'M-23 to M-42 are proposed positions along the west bank inside the motorcycle area. The supplied site photo does not locate individual bays; campus confirmation is still required.',
-            'Car slots C-38 and C-40 are not printed on the drawing (row 22-41 shows 37, 39, 41, then the PWD bay); their inventory records are retained without drawing additional bays.',
-            'The unnumbered PWD bay directly after 41 is read as C-42, the accessible slot within the 55-slot capacity. Automatic assignment gives it out last.',
-            'The car area is titled "55 slots" but shows about 79 painted bays numbered up to 84; bays beyond 55 are drawn as unnumbered stalls and are not PASS slots.',
-            'The motorcycle columns contain duplicate or out-of-order numbers; obvious misprints were read as the missing number (see corrections) and the remaining duplicates are drawn but not bound.',
-            'The drawing marks a "Motorcycle only gate"; per the operating rule there is a single shared Main Entrance/Exit, so that marker is shown only as the internal route to the motorcycle area.',
-            'The highway outside the Main Entrance/Exit is not part of the parking site and is not shown.',
-        ];
-    }
-
-    /** Lengths transcribed from the owner's annotated aerial image; not survey-certified. */
     public static function referenceDimensions(): array
     {
-        return [
-            ['id' => 'D1', 'text' => '160.00 m', 'description' => 'North-west long edge', 'at' => [166, 31], 'angle' => -21, 'from' => [57, 92], 'to' => [287, 4]],
-            ['id' => 'D2', 'text' => '22.67 m', 'description' => 'Short north-west segment', 'at' => [295, -23], 'angle' => 0, 'from' => [289, -9], 'to' => [314, 8]],
-            ['id' => 'D3', 'text' => '20.00 m', 'description' => 'First label on the northern edge', 'at' => [386, 3], 'angle' => 7, 'from' => [320, 8], 'to' => [463, 26]],
-            ['id' => 'D4', 'text' => '40.00 m', 'description' => 'Second label on the northern edge', 'at' => [607, 32], 'angle' => 7, 'from' => [465, 26], 'to' => [750, 61]],
-            ['id' => 'D5', 'text' => '60.00 m', 'description' => 'Eastern edge', 'at' => [790, 194], 'angle' => 90, 'from' => [773, 86], 'to' => [773, 302]],
-            ['id' => 'D6', 'text' => '80.00 m', 'description' => 'Short south-east edge', 'at' => [703, 340], 'angle' => 10, 'from' => [746, 327], 'to' => [642, 309]],
-            ['id' => 'D7', 'text' => '100.00 m', 'description' => 'South-west edge of car area', 'at' => [520, 363], 'angle' => -10, 'from' => [642, 311], 'to' => [404, 355]],
-            ['id' => 'D8', 'text' => '120.00 m', 'description' => 'Sloping dividing edge', 'at' => [364, 277], 'angle' => 73, 'from' => [302, 39], 'to' => [388, 334]],
-            ['id' => 'D9', 'text' => '200.00 m', 'description' => 'South edge of motorcycle area', 'at' => [232, 289], 'angle' => -13, 'from' => [100, 300], 'to' => [377, 236]],
+        $dimensions = [
+            ['id' => 'M-L', 'text' => '30.96 m', 'description' => 'Motorcycle parcel length', 'at' => self::point('MC', 15.48, 14.5), 'angle' => -21, 'from' => self::point('MC', 0, 13.5), 'to' => self::point('MC', 30.96, 13.5)],
+            ['id' => 'M-W', 'text' => '8.80 m', 'description' => 'Motorcycle parcel width (road excluded)', 'at' => self::point('MC', -3.4, 4.4), 'angle' => 69, 'from' => self::point('MC', -2.2, 0), 'to' => self::point('MC', -2.2, 8.8)],
+            ['id' => 'ROAD', 'text' => '3.06 m', 'description' => 'Separate shared access road width', 'at' => self::point('MC', 4, -4.8), 'angle' => -21, 'from' => self::point('MC', 4, -3.06), 'to' => self::point('MC', 4, 0)],
         ];
+        // All eight measurements appear in the evidence table. Short edge callouts
+        // stay in that table so they do not overlap adjacent bays on small displays.
+        foreach ([0 => [55, 9], 1 => [45, 22], 3 => [30, 27.5], 4 => [7, 19], 7 => [25, -4]] as $i => $at) {
+            $dimensions[] = ['id' => 'C'.($i + 1), 'text' => number_format(self::CAR_EDGES[$i], 2).' m', 'description' => 'Car boundary edge '.($i + 1).' (assumed order)', 'at' => self::point('CAR', ...$at), 'angle' => 0, 'from' => self::point('CAR', ...self::CAR_POINTS[$i]), 'to' => self::point('CAR', ...self::CAR_POINTS[($i + 1) % 8])];
+        }
+
+        return $dimensions;
     }
 
     public static function measurementBasis(): array
     {
         return [
-            'survey_verified' => false,
-            'scale' => 'schematic',
-            'source_image' => '/references/dyci-site-dimensions-20261017.png',
-            'note' => 'Boundary labels are copied from the supplied aerial image. Bay symbols are proportional design templates; the overall site is not to scale. Lengths alone do not establish bearings, clearances or survey accuracy.',
+            'survey_verified' => false, 'scale' => 'metric_proposal', 'units_per_metre' => self::UNITS_PER_METRE,
+            'source_image' => '/references/dyci-motorcycle-boundary-20261016.png',
+            'car_source_image' => '/references/dyci-car-boundary-20261016.png',
+            'car_edges_m' => self::CAR_EDGES,
+            'note' => 'Proposed layout at one scale: 8 drawing units = 1 metre. Motorcycle dimensions are owner-reported. Car edge lengths follow the supplied order, starting at the right edge; angles are estimated from the image, not surveyed. Earlier cumulative map-ruler labels have been removed.',
+            'motorcycle_proposal' => '84 compact bays: 3 rows × 28, each 1.00 × 2.00 m. Two 1.20 m internal aisles, a 2.56 m connecting end aisle, 0.40 m end margin and 0.20 m side margins. Narrow aisles are a walk/push proposal for compact motorcycles and scooters; actual vehicle sizes and manoeuvring must be checked.',
+            'car_proposal' => '30 car bays shown, including the existing C-42 accessible designation, with a 6.00 m aisle and a 1.20 m front walkway at C-42. This is one conservative arrangement, not the maximum site capacity. The 55-car inventory is retained; 25 car records have no proposed map position. Fitting all 55 has not been demonstrated. Accessible space count and continuous accessible route still require review.',
+            'inventory' => ['motorcycle_configured' => 84, 'motorcycle_drawn' => 84, 'car_configured' => 55, 'car_drawn' => 30],
             'standards' => [
-                ['type' => 'car', 'label' => 'Car bay (perpendicular / diagonal)', 'width_m' => 2.5, 'length_m' => 5.0,
-                    'basis' => 'Philippine building-code dimension, adopted as the bay template; actual site dimensions remain unverified.',
-                    'source' => 'National Building Code IRR, Rule VII, Section 707(4)(b), reproduced in the Pasig City government copy, p. 100',
-                    'url' => 'https://assets.pasigcity.gov.ph/storage/city_ordinance/2024/10/21/67c675622ba621741059426part%201.pdf'],
-                ['type' => 'motorcycle', 'label' => 'Motorcycle bay', 'width_m' => 1.3, 'length_m' => 2.8,
-                    'basis' => 'Adopted prototype design target from UK council guidance; not asserted as a Philippine legal minimum or existing DYCI measurement.',
-                    'source' => 'Rotherham Council, Transport Assessments, Travel Plans and Parking Standards, paragraph 78',
-                    'url' => 'https://moderngov.rotherham.gov.uk/documents/s131792/Appendix%206%20-%20SPD_TransportAssessments.pdf'],
-                ['type' => 'accessible', 'label' => 'Accessible car bay', 'width_m' => 4.0, 'length_m' => 5.0,
-                    'basis' => '2024 amended BP 344 IRR bay dimensions. Also requires a 1.20 m clear front walkway and appropriate access. This drawing does not certify compliance.',
-                    'source' => 'NCDA, 2024 revised BP 344 IRR, Section A.6 Parking',
-                    'url' => 'https://ncda.gov.ph/revised-2024-rules-and-regulations-implementing-batas-pambansa-344/'],
+                ['type' => 'car', 'label' => 'Car bay', 'width_m' => 2.5, 'length_m' => 5.0, 'basis' => 'Philippine NBCP perpendicular/diagonal bay reference. Six-metre car aisle is a proposed design allowance; turning movements require site validation.', 'source' => 'National Building Code IRR, Rule VII, Section 707(4)(b), Pasig government copy, p. 100', 'url' => 'https://assets.pasigcity.gov.ph/storage/city_ordinance/2024/10/21/67c675622ba621741059426part%201.pdf'],
+                ['type' => 'motorcycle', 'label' => 'Compact motorcycle bay', 'width_m' => 1.0, 'length_m' => 2.0, 'basis' => 'Compact design reference from UK council guidance, not a Philippine legal minimum or suitable for every motorcycle. A larger vehicle/bay requirement reduces the proposed count.', 'source' => 'North Tyneside Council, Transport and Highways SPD 2022, Appendix E', 'url' => 'https://my.northtyneside.gov.uk/sites/default/files/web-page-related-files/Transport%20and%20Highways%20SPD%202022.pdf'],
+                ['type' => 'accessible', 'label' => 'Accessible car bay', 'width_m' => 4.0, 'length_m' => 5.0, 'basis' => '2024 BP 344 IRR bay dimensions with a 1.20 m front walkway. This proposal does not establish the required accessible count, route, slope or full compliance.', 'source' => 'NCDA, revised 2024 BP 344 IRR, Section A.6 Parking', 'url' => 'https://ncda.gov.ph/revised-2024-rules-and-regulations-implementing-batas-pambansa-344/'],
             ],
-            'pathway_note' => 'Existing pathway geometry and traffic arrows are retained. Actual aisle and gate clear widths have not been measured; no compliance or vehicle turning-clearance claim is made.',
+            'pathway_note' => 'The shared road follows the existing gate and diagonal route. Its width is 3.06 m in total, separate from the motorcycle parcel; arrows indicate alternating entry/exit, not two simultaneous car lanes. Internal parking aisles have been rearranged. Physical gate and turning clearances remain subject to campus review.',
         ];
     }
 
-    /** Bays whose printed number was read as a different (missing) number. */
+    public static function ambiguities(): array
+    {
+        return [
+            self::measurementBasis()['motorcycle_proposal'], self::measurementBasis()['car_proposal'],
+            'Car perimeter bearings are assumed. Lengths alone do not determine the actual parcel shape or prove capacity. All map placements are proposals, not as-built positions.',
+            'The retained 139-slot database inventory is not a certified physical capacity. This update changes diagram coordinates only; it does not approve or implement a capacity change.',
+        ];
+    }
+
     public static function corrections(): array
     {
-        return array_values(array_filter(array_map(
-            fn ($b) => $b['slot_number'] !== null && ! $b['pwd'] && (string) $b['slot_number'] !== $b['label']
-                ? sprintf('%s: printed "%s" read as %s-%02d', $b['row'], $b['label'], $b['area'] === 'CAR' ? 'C' : 'M', $b['slot_number'])
-                : null,
-            self::bays()
-        )));
+        return ['Removed invalid cumulative-ruler labels and old duplicate painted bays. Proposed slots use unique existing PASS codes; no off-map parking pads are added.'];
     }
 }

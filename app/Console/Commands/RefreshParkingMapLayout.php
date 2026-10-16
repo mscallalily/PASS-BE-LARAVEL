@@ -14,7 +14,7 @@ class RefreshParkingMapLayout extends Command
     public function handle(ParkingLayoutUpdater $updater): int
     {
         $this->info($updater->apply().' slot diagram coordinate(s) updated.');
-        $this->line('M-23–M-42 are proposed west-bank positions. Boundary dimensions remain unverified source-image labels.');
+        $this->line('Metric proposal: 84 compact motorcycle bays and 30 car bays drawn. All 139 inventory records are retained; 25 car positions remain unconfirmed. This does not certify physical capacity.');
 
         return self::SUCCESS;
     }

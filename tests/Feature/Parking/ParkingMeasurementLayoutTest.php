@@ -8,39 +8,113 @@ use Illuminate\Support\Facades\DB;
 
 class ParkingMeasurementLayoutTest extends ParkingTestCase
 {
-    public function test_restored_motorcycle_bank_stays_inside_the_site_and_retains_the_pathway(): void
+    public function test_metric_parcels_retain_owner_dimensions_and_proposal_limits(): void
     {
-        $geometry = ParkingMapLayout::geometry();
-        $this->assertSame('b43539d786ebd9b613277b05432fda7fe11e8d36d3783d25876ed9302160f586', hash('sha256', json_encode(array_intersect_key($geometry, array_flip(['road', 'gate', 'lanes', 'connector'])))));
-        $positions = ParkingMapLayout::slotPositions();
-        foreach (range(1, 84) as $number) {
-            $code = sprintf('M-%02d', $number);
-            $this->assertArrayHasKey($code, $positions);
-            $this->assertSame($number, $positions[$code]['slot_number']);
-            $this->assertSame(6.5, $positions[$code]['w']);
-            $this->assertSame(14.0, $positions[$code]['h']);
+        $g = ParkingMapLayout::geometry();
+        $unit = $g['measurement_basis']['units_per_metre'];
+        $mc = $g['areas'][0]['polygon'];
+        $this->assertEqualsWithDelta(30.96, $this->distance($mc[0], $mc[1]) / $unit, 0.00001);
+        $this->assertEqualsWithDelta(8.8, $this->distance($mc[1], $mc[2]) / $unit, 0.00001);
+        $road = $g['road']['polygon'];
+        $this->assertEqualsWithDelta(3.06, $this->distance($road[1], $road[2]) / $unit, 0.00001);
+        $this->assertSame([69, 114], $g['gate']['at']);
+        $this->assertSame(-21, $g['gate']['angle']);
+        $this->assertSame('alternating', $g['road']['traffic']);
+        $car = $g['areas'][1]['polygon'];
+        foreach ([18.42, 12.04, 2.60, 20.18, 33.37, 3.00, 3.36, 49.26] as $i => $length) {
+            $this->assertEqualsWithDelta($length, $this->distance($car[$i], $car[($i + 1) % 8]) / $unit, 0.00001);
         }
-        $polygon = $geometry['areas'][0]['polygon'];
-        foreach (range(23, 42) as $number) {
-            $bay = $positions[sprintf('M-%02d', $number)];
-            $radians = deg2rad($bay['rotation']);
-            foreach ([-1, 1] as $along) {
-                foreach ([-1, 1] as $across) {
-                    $x = $bay['x'] + $along * $bay['w'] / 2 * cos($radians) - $across * $bay['h'] / 2 * sin($radians);
-                    $y = $bay['y'] + $along * $bay['w'] / 2 * sin($radians) + $across * $bay['h'] / 2 * cos($radians);
-                    foreach ($polygon as $index => [$ax, $ay]) {
-                        [$bx, $by] = $polygon[($index + 1) % count($polygon)];
-                        $this->assertGreaterThanOrEqual(0, ($bx - $ax) * ($y - $ay) - ($by - $ay) * ($x - $ax), "M-{$number} must stay inside the motorcycle area");
-                    }
+        $this->assertCount(114, ParkingMapLayout::slotPositions());
+        $this->assertSame(['motorcycle_configured' => 84, 'motorcycle_drawn' => 84, 'car_configured' => 55, 'car_drawn' => 30], $g['measurement_basis']['inventory']);
+        $this->assertFalse($g['measurement_basis']['survey_verified']);
+        $this->assertStringContainsString('not the maximum', $g['measurement_basis']['car_proposal']);
+        $this->assertStringContainsString('walk/push', $g['measurement_basis']['motorcycle_proposal']);
+        $this->assertSame([], $g['trays']);
+        $this->assertNotContains('160.00 m', array_column($g['dimensions'], 'text'));
+    }
+
+    public function test_bays_are_inside_parcels_without_overlapping_other_bays_aisles_or_the_road(): void
+    {
+        $g = ParkingMapLayout::geometry();
+        $positions = ParkingMapLayout::slotPositions();
+        $this->assertCount(84, array_filter($positions, fn ($b) => $b['area'] === 'MC'));
+        $this->assertCount(30, array_filter($positions, fn ($b) => $b['area'] === 'CAR'));
+        foreach (range(1, 84) as $i) {
+            $this->assertArrayHasKey(sprintf('M-%02d', $i), $positions);
+        }
+        $polygons = [];
+        foreach ($positions as $code => $bay) {
+            $this->assertSame('proposed', $bay['placement_basis']);
+            $this->assertEqualsWithDelta($bay['area'] === 'MC' ? 1 : ($bay['pwd'] ? 4 : 2.5), $bay['w'] / 8, 0.00001);
+            $this->assertEqualsWithDelta($bay['area'] === 'MC' ? 2 : 5, $bay['h'] / 8, 0.00001);
+            $poly = $this->corners($bay);
+            $parcel = $g['areas'][$bay['area'] === 'MC' ? 0 : 1]['polygon'];
+            // Sample the whole perimeter: concave notches cannot be bridged by a bay.
+            foreach ($poly as $i => $a) {
+                $b = $poly[($i + 1) % 4];
+                foreach (range(0, 20) as $step) {
+                    $p = [$a[0] + ($b[0] - $a[0]) * $step / 20, $a[1] + ($b[1] - $a[1]) * $step / 20];
+                    $this->assertTrue($this->inside($p, $parcel), "$code must remain inside its parcel");
+                }
+            }
+            foreach (array_merge([$g['road']], $g['circulation']) as $clearance) {
+                $this->assertFalse($this->overlap($poly, $clearance['polygon']), "$code overlaps a road, walkway or aisle");
+            }
+            foreach ($polygons as $otherCode => $other) {
+                $this->assertFalse($this->overlap($poly, $other), "$code overlaps $otherCode");
+            }
+            $polygons[$code] = $poly;
+        }
+    }
+
+    private function distance(array $a, array $b): float
+    {
+        return hypot($b[0] - $a[0], $b[1] - $a[1]);
+    }
+
+    private function corners(array $b): array
+    {
+        $r = deg2rad($b['rotation']);
+
+        return array_map(fn ($p) => [$b['x'] + $p[0] * cos($r) - $p[1] * sin($r), $b['y'] + $p[0] * sin($r) + $p[1] * cos($r)], [[-$b['w'] / 2, -$b['h'] / 2], [$b['w'] / 2, -$b['h'] / 2], [$b['w'] / 2, $b['h'] / 2], [-$b['w'] / 2, $b['h'] / 2]]);
+    }
+
+    private function inside(array $p, array $poly): bool
+    {
+        $inside = false;
+        foreach ($poly as $i => $a) {
+            $b = $poly[($i + 1) % count($poly)];
+            $dx = $b[0] - $a[0];
+            $dy = $b[1] - $a[1];
+            $t = max(0, min(1, (($p[0] - $a[0]) * $dx + ($p[1] - $a[1]) * $dy) / ($dx * $dx + $dy * $dy)));
+            if (hypot($p[0] - $a[0] - $t * $dx, $p[1] - $a[1] - $t * $dy) < 0.005) {
+                return true;
+            }
+            if (($a[1] > $p[1]) !== ($b[1] > $p[1]) && $p[0] < ($b[0] - $a[0]) * ($p[1] - $a[1]) / ($b[1] - $a[1]) + $a[0]) {
+                $inside = ! $inside;
+            }
+        }
+
+        return $inside;
+    }
+
+    /** Separating-axis test for two convex polygons; touching edges are allowed. */
+    private function overlap(array $a, array $b): bool
+    {
+        foreach ([$a, $b] as $poly) {
+            foreach ($poly as $i => $p) {
+                $q = $poly[($i + 1) % count($poly)];
+                $length = $this->distance($p, $q);
+                $axis = [-($q[1] - $p[1]) / $length, ($q[0] - $p[0]) / $length];
+                $pa = array_map(fn ($v) => $v[0] * $axis[0] + $v[1] * $axis[1], $a);
+                $pb = array_map(fn ($v) => $v[0] * $axis[0] + $v[1] * $axis[1], $b);
+                if (min(max($pa), max($pb)) - max(min($pa), min($pb)) <= 0.01) {
+                    return false;
                 }
             }
         }
-        $this->assertSame('proposed', $positions['M-23']['placement_basis']);
-        $this->assertSame('proposed', $positions['M-42']['placement_basis']);
-        $this->assertCount(20, $geometry['proposed_slot_codes']);
-        $this->assertSame(['160.00 m', '22.67 m', '20.00 m', '40.00 m', '60.00 m', '80.00 m', '100.00 m', '120.00 m', '200.00 m'], array_column($geometry['dimensions'], 'text'));
-        $this->assertFalse($geometry['measurement_basis']['survey_verified']);
-        $this->assertSame('schematic', $geometry['measurement_basis']['scale']);
+
+        return true;
     }
 
     public function test_coordinate_refresh_is_idempotent_and_preserves_sessions_status_capacity_and_gate_state(): void
