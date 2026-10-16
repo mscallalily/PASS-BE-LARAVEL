@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\DeviceSimulatorController;
 use App\Http\Controllers\Api\GuestAccountController;
 use App\Http\Controllers\Api\SyncController;
 use App\Http\Controllers\Api\AdminDashboardController;
+use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\SystemSettingsController;
 use App\Http\Controllers\Api\ParkingSlotSimulationController;
 
@@ -183,6 +184,9 @@ Route::post(
 
     // Admin user management
     Route::prefix('admin')->group(function () {
+        Route::get('/dashboard', [AdminDashboardController::class, 'index']);
+        Route::get('/parking/occupancy', [AdminDashboardController::class, 'occupancy']);
+        Route::get('/audit-logs', [AuditLogController::class, 'index']);
         Route::get('/system-settings', [SystemSettingsController::class, 'index']);
         Route::put('/system-settings', [SystemSettingsController::class, 'update']);
         Route::post('/system-settings/logo', [SystemSettingsController::class, 'uploadLogo']);
