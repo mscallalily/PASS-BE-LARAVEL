@@ -108,6 +108,7 @@ class GuestAccountTest extends ParkingTestCase
         $this->postJson('/api/guest/register', $data)->assertCreated();
         $user = User::where('email', $data['email'])->firstOrFail();
         Notification::fake();
+        $this->travel(61)->seconds();
         $this->postJson('/api/email/verification-notification', ['email' => $data['email']])->assertOk();
         Notification::assertSentTo($user, PassEmailVerificationNotification::class);
         $parameters = ['id' => $user->getKey(), 'hash' => sha1($user->getEmailForVerification())];
@@ -126,6 +127,7 @@ class GuestAccountTest extends ParkingTestCase
         $user = User::where('email', $data['email'])->firstOrFail();
         $this->assertNull($user->email_verified_at);
         Notification::fake();
+        $this->travel(61)->seconds();
         $this->postJson('/api/email/verification-notification', ['email' => $data['email']])->assertOk();
         Notification::assertSentTo($user, PassEmailVerificationNotification::class);
     }

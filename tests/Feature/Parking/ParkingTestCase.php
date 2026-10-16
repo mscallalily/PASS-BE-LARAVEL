@@ -43,6 +43,7 @@ abstract class ParkingTestCase extends TestCase
             'password' => bcrypt('password'),
             'user_type' => $type,
             'account_status' => 'active',
+            'email_verified_at' => now(),
             'created_at' => now(),
             'updated_at' => now(),
         ], 'user_id');

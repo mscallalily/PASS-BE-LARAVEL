@@ -33,6 +33,8 @@ Route::post('/guest/register', [GuestAccountController::class, 'register'])
 Route::post('/devices/rfid/scan', [RfidReaderController::class, 'scan'])
     ->middleware('throttle:120,1');
 
+Route::post('/email/verify-code', \App\Http\Controllers\Api\VerifyEmailCodeController::class)->middleware('throttle:10,1');
+
 // Email verification
 Route::get(
     '/email/verify/{id}/{hash}',
@@ -57,7 +59,7 @@ Route::post('/reset-password', [AuthController::class, 'resetPassword'])
     ->middleware('throttle:5,1');
 
 // Authenticated routes
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', \App\Http\Middleware\AccountAccess::class])->group(function () {
     Route::get(
     '/vehicles/{id}/photo',
     [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'photo']

@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
-use App\Notifications\PassEmailVerificationNotification;
 use Throwable;
 use App\Services\Parking\VisitorPassPolicy;
 use App\Services\Parking\VisitorRequestService;
@@ -98,7 +97,7 @@ class GuestAccountController extends Controller
 
         $sent = false;
         try {
-            User::findOrFail($userId)->notify(new PassEmailVerificationNotification());
+            app(\App\Services\Auth\EmailVerificationCodes::class)->send(User::findOrFail($userId));
             $sent = true;
         } catch (Throwable $exception) {
             report($exception);

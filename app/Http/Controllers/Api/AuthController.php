@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Notifications\PassEmailVerificationNotification;
 use App\Http\Controllers\Controller;
 use App\Jobs\ProcessLicenseVerification;
 use App\Models\Department;
@@ -365,7 +364,7 @@ $licenseId = DB::table('driver_licenses')->insertGetId([
             $emailVerificationSent = false;
 
             try {
-                $user->notify(new PassEmailVerificationNotification());
+                app(\App\Services\Auth\EmailVerificationCodes::class)->send($user);
                 $emailVerificationSent = true;
             } catch (Throwable $mailException) {
                 report($mailException);
@@ -373,7 +372,7 @@ $licenseId = DB::table('driver_licenses')->insertGetId([
 
             return response()->json([
                 'message' => $emailVerificationSent
-                    ? 'Registration submitted. Please check your email to verify your address. Your account is still pending administrator approval.'
+                    ? 'Registration submitted. Please check your email for the 6-digit verification code. Your account is still pending administrator approval.'
                     : 'Registration submitted, but the verification email could not be sent. Your account is still pending administrator approval. Please try again later.',
                 'email_verification_sent' => $emailVerificationSent,
                 'user' => $this->userPayload($user),
@@ -421,15 +420,15 @@ $licenseId = DB::table('driver_licenses')->insertGetId([
             ], 401);
         }
 
-        if ($user->isGuest() && !$user->hasVerifiedEmail()) {
+        if (($user->isGuest() || in_array($user->user_type, ['student', 'faculty', 'employee', 'other'], true)) && !$user->hasVerifiedEmail()) {
             $this->logAttempt($request, $user, $data['identifier'], false, 'email_unverified');
             return response()->json([
-                'message' => 'Please verify your email address before signing in. Use Resend verification email on the guest registration page if needed.',
+                'message' => 'Please verify your email address before signing in. Open Verify email to request and enter your verification code.',
                 'code' => 'email_unverified',
             ], 403);
         }
 
-        if ($user->account_status !== 'active') {
+        if ($user->account_status !== 'active' && !($user->account_status === 'pending' && in_array($user->user_type, ['student', 'faculty', 'employee', 'other'], true) && !$user->isGuest())) {
             $this->logAttempt(
                 $request,
                 $user,
@@ -505,6 +504,9 @@ $licenseId = DB::table('driver_licenses')->insertGetId([
             'role' => $user->roles->first()?->role_code,
             'idNum' => $user->user_code,
             'dept' => $profile?->department?->department_name,
+            'accountStatus' => $user->account_status,
+            'emailVerified' => $user->hasVerifiedEmail(),
+            'schoolIdSubmitted' => !empty($profile?->school_id_document_path),
         ];
     }
 
