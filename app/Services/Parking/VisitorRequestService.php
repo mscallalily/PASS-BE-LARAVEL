@@ -22,6 +22,32 @@ class VisitorRequestService
     /** Uses of an issued pass: one entry and one exit. */
     public const PASS_USES = 2;
 
+    /** Store immutable per-request evidence; remove uploads if any database work fails. */
+    public function withDocuments(\Illuminate\Http\Request $request, callable $operation): mixed
+    {
+        $paths = [];
+        try {
+            foreach (['driver_license_photo' => 'driver_license_photo_path', 'vehicle_photo' => 'vehicle_photo_path'] as $input => $column) {
+                $path = $request->file($input)->store('visitor-request-documents', 'private');
+                if (!$path) throw new \RuntimeException('Unable to store visitor document.');
+                $paths[$column] = $path;
+            }
+            return DB::transaction(fn () => $operation($paths));
+        } catch (\Throwable $exception) {
+            foreach ($paths as $path) \Illuminate\Support\Facades\Storage::disk('private')->delete($path);
+            throw $exception;
+        }
+    }
+
+    public static function documentSummary(object $row): array
+    {
+        return [
+            'license_available' => !empty($row->driver_license_photo_path),
+            'vehicle_available' => !empty($row->vehicle_photo_path),
+            'reviewed_at' => !empty($row->documents_reviewed_at) ? \App\Http\Controllers\Api\ParkingOperationsController::iso($row->documents_reviewed_at) : null,
+        ];
+    }
+
     /** File a pending request for a visitor's registered vehicle and notify Admins. */
     public function create(int $visitorId, int $vehicleId, string $purpose, string $visiting, CarbonImmutable $from, CarbonImmutable $until, User $actor, string $source): int
     {
@@ -86,7 +112,7 @@ class VisitorRequestService
     }
 
     /** Approve a pending request (Admin only) and issue its Visitor QR pass. */
-    public function approve(int $requestId, User $admin, ?string $remarks): object
+    public function approve(int $requestId, User $admin, ?string $remarks, bool $documentsReviewed = false): object
     {
         $req = $this->lockPending($requestId);
 
@@ -98,6 +124,18 @@ class VisitorRequestService
         }
         if (!$req->vehicle_id || !DB::table('vehicles')->where('vehicle_id', $req->vehicle_id)->whereNull('deleted_at')->exists()) {
             abort(409, 'The request has no registered vehicle.');
+        }
+
+        foreach (['driver_license_photo_path', 'vehicle_photo_path'] as $column) {
+            if (empty($req->$column) || !\Illuminate\Support\Facades\Storage::disk('private')->exists($req->$column)) {
+                abort(409, 'License and vehicle photos are required before approval. Ask the visitor to cancel and submit a new request with both photos.');
+            }
+        }
+        if (!$documentsReviewed) {
+            throw ValidationException::withMessages(['documents_reviewed' => 'Review both photos and confirm they match the submitted driver and vehicle before approving.']);
+        }
+        if (!empty($req->driver_license_expiry) && $req->driver_license_expiry < CampusTime::date(CarbonImmutable::parse($req->requested_valid_until, config('app.timezone')))) {
+            abort(409, 'The declared license expires before the requested visit ends. Submit a new request with a valid license.');
         }
 
         $code = (string) Str::uuid();
@@ -121,13 +159,15 @@ class VisitorRequestService
 
         DB::table('visitor_requests')->where('request_id', $requestId)->update([
             'request_status' => 'approved',
+            'documents_reviewed_by' => $admin->user_id,
+            'documents_reviewed_at' => now(),
             'reviewed_by' => $admin->user_id,
             'reviewed_at' => now(),
             'review_remarks' => $remarks,
             'updated_at' => now(),
         ]);
 
-        $this->audit($admin, $requestId, 'visitor_request_approved', ['request_status' => 'pending'], ['request_status' => 'approved', 'qr_pass_id' => $passId]);
+        $this->audit($admin, $requestId, 'visitor_request_approved', ['request_status' => 'pending'], ['request_status' => 'approved', 'qr_pass_id' => $passId, 'documents_reviewed_by' => $admin->user_id]);
         $this->notifyGuest($req, 'visitor_request_approved', 'Visitor parking request approved',
             'Your visitor parking request for ' . $this->plate($req) . ' was approved. Your QR pass is ready in your PASS account; show it at the Main Entrance / Exit.'
                 . ($remarks ? " Note: {$remarks}" : ''));

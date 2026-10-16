@@ -205,7 +205,7 @@ class GuestAccountController extends Controller
             ->leftJoin('parking_areas as a', 'a.parking_area_id', '=', 'r.destination_area_id')
             ->where('r.visitor_id', $visitor->visitor_id)
             ->orderByDesc('r.request_id')
-            ->get(['r.driver_name', 'r.driver_is_requester', 'r.driver_license_encrypted', 'r.driver_license_expiry', 'r.passenger_count', 'r.request_id', 'r.request_status', 'r.purpose', 'r.requested_valid_from', 'r.requested_valid_until', 'r.reviewed_at', 'r.review_remarks', 'r.created_at', 'v.plate_number', 'vt.type_name', 'a.area_name'])
+            ->get(['r.driver_license_photo_path', 'r.vehicle_photo_path', 'r.documents_reviewed_at', 'r.driver_name', 'r.driver_is_requester', 'r.driver_license_encrypted', 'r.driver_license_expiry', 'r.passenger_count', 'r.request_id', 'r.request_status', 'r.purpose', 'r.requested_valid_from', 'r.requested_valid_until', 'r.reviewed_at', 'r.review_remarks', 'r.created_at', 'v.plate_number', 'vt.type_name', 'a.area_name'])
             ->map(function ($r) use ($now) {
                 $pass = DB::table('qr_passes')->where('request_id', $r->request_id)->orderByDesc('qr_pass_id')->first();
 
@@ -213,6 +213,7 @@ class GuestAccountController extends Controller
                     'request_id' => $r->request_id,
                     'request_status' => $r->request_status,
                     'purpose' => $r->purpose,
+                    'documents' => \App\Services\Parking\VisitorRequestService::documentSummary($r),
                     'driver' => \App\Services\Parking\VisitorRequestService::driverSummary($r),
                     'valid_from' => ParkingOperationsController::iso($r->requested_valid_from),
                     'valid_until' => ParkingOperationsController::iso($r->requested_valid_until),
@@ -241,6 +242,8 @@ class GuestAccountController extends Controller
             'departure_time' => ['required', 'date_format:H:i'],
             'purpose' => ['required', 'string', 'max:150'],
             'visiting' => ['required', 'string', 'max:90'],
+            'driver_license_photo' => ['required', 'image', 'mimes:jpg,jpeg,png', 'max:5120'],
+            'vehicle_photo' => ['required', 'image', 'mimes:jpg,jpeg,png', 'max:5120'],
             'driver_is_requester' => ['required', 'boolean'],
             'driver_name' => ['required_if:driver_is_requester,false', 'nullable', 'string', 'max:200', 'regex:/^\S+(\s+\S+)+$/u'],
             'driver_license_number' => ['required', 'string', 'min:6', 'max:30', 'regex:/^[A-Za-z0-9 -]+$/'],
@@ -262,11 +265,12 @@ class GuestAccountController extends Controller
             throw ValidationException::withMessages(['departure_time' => 'Departure must be after arrival.']);
         }
 
-        $requestId = DB::transaction(function () use ($visitor, $user, $data, $from, $until, $request) {
+        $requestId = $this->requests->withDocuments($request, function ($paths) use ($visitor, $user, $data, $from, $until, $request) {
             $id = $this->requests->create(
                 $visitor->visitor_id, (int) $data['vehicle_id'], $data['purpose'], $data['visiting'], $from, $until, $user, 'guest_account'
             );
             DB::table('visitor_requests')->where('request_id', $id)->update([
+                ...$paths,
                 'driver_is_requester' => $request->boolean('driver_is_requester'),
                 'driver_name' => $request->boolean('driver_is_requester')
                     ? trim($visitor->first_name . ' ' . $visitor->last_name) : trim($data['driver_name']),

@@ -92,7 +92,7 @@ class VisitorAccessController extends Controller
             ->orderByDesc('r.request_id')
             ->limit(300)
             ->get([
-                'r.driver_name', 'r.driver_is_requester', 'r.driver_license_encrypted', 'r.driver_license_expiry', 'r.passenger_count', 'r.request_id', 'r.request_status', 'r.purpose', 'r.requested_valid_from', 'r.requested_valid_until', 'r.reviewed_at', 'r.review_remarks', 'r.created_at',
+                'r.driver_license_photo_path', 'r.vehicle_photo_path', 'r.documents_reviewed_at', 'r.driver_name', 'r.driver_is_requester', 'r.driver_license_encrypted', 'r.driver_license_expiry', 'r.passenger_count', 'r.request_id', 'r.request_status', 'r.purpose', 'r.requested_valid_from', 'r.requested_valid_until', 'r.reviewed_at', 'r.review_remarks', 'r.created_at',
                 'vis.visitor_id', 'vis.user_id as visitor_user_id', DB::raw("CONCAT_WS(' ', vis.first_name, vis.last_name) as visitor_name"), 'vis.contact_number', 'vis.affiliation', 'vis.is_blacklisted',
                 'v.vehicle_id', 'v.plate_number', 'vt.type_name as vehicle_type', 'a.area_name', 'rev.user_code as reviewed_by',
             ])
@@ -103,6 +103,7 @@ class VisitorAccessController extends Controller
                     'request_id' => $r->request_id,
                     'request_status' => $r->request_status,
                     'purpose' => $r->purpose,
+                    'documents' => \App\Services\Parking\VisitorRequestService::documentSummary($r),
                     'driver' => VisitorRequestService::driverSummary($r),
                     'valid_from' => ParkingOperationsController::iso($r->requested_valid_from),
                     'valid_until' => ParkingOperationsController::iso($r->requested_valid_until),
@@ -143,6 +144,12 @@ class VisitorAccessController extends Controller
             'color' => ['nullable', 'string', 'max:50'],
             'purpose' => ['required', 'string', 'max:150'],
             'visiting' => ['required', 'string', 'max:90'],
+            'driver_name' => ['required', 'string', 'max:200', 'regex:/^\S+(\s+\S+)+$/u'],
+            'driver_license_number' => ['required', 'string', 'min:6', 'max:30', 'regex:/^[A-Za-z0-9 -]+$/'],
+            'driver_license_expiry' => ['required', 'date_format:Y-m-d'],
+            'passenger_count' => ['required', 'integer', 'min:0', 'max:99'],
+            'driver_license_photo' => ['required', 'image', 'mimes:jpg,jpeg,png', 'max:5120'],
+            'vehicle_photo' => ['required', 'image', 'mimes:jpg,jpeg,png', 'max:5120'],
             // Campus (Asia/Manila) local times from a datetime-local input.
             'valid_from' => ['required', 'date_format:Y-m-d\TH:i'],
             'valid_until' => ['required', 'date_format:Y-m-d\TH:i'],
@@ -155,8 +162,11 @@ class VisitorAccessController extends Controller
         $until = CarbonImmutable::createFromFormat('Y-m-d\TH:i', $data['valid_until'], CampusTime::zone());
         $plate = strtoupper(preg_replace('/\s+/', ' ', trim($data['plate_number'])));
         $actor = $request->user();
+        if ($data['driver_license_expiry'] < CampusTime::date($until)) {
+            throw ValidationException::withMessages(['driver_license_expiry' => 'The license must be valid through the end of the visit.']);
+        }
 
-        return DB::transaction(function () use ($data, $plate, $from, $until, $actor) {
+        return $this->requests->withDocuments($request, function ($paths) use ($data, $plate, $from, $until, $actor) {
             if (!empty($data['visitor_id'])) {
                 $visitorId = (int) $data['visitor_id'];
             } else {
@@ -180,6 +190,11 @@ class VisitorAccessController extends Controller
 
             $vehicleId = self::registerVisitorVehicle($visitorId, $plate, (int) $data['vehicle_type_id'], $data);
             $requestId = $this->requests->create($visitorId, $vehicleId, $data['purpose'], $data['visiting'], $from, $until, $actor, 'staff_desk');
+            DB::table('visitor_requests')->where('request_id', $requestId)->update([
+                ...$paths, 'driver_is_requester' => false, 'driver_name' => trim($data['driver_name']),
+                'driver_license_encrypted' => \Illuminate\Support\Facades\Crypt::encryptString(strtoupper(trim($data['driver_license_number']))),
+                'driver_license_expiry' => $data['driver_license_expiry'], 'passenger_count' => (int) $data['passenger_count'],
+            ]);
 
             return response()->json(['message' => "Visitor request #{$requestId} for {$plate} is waiting for Admin approval.", 'request_id' => $requestId], 201);
         });
@@ -233,7 +248,7 @@ class VisitorAccessController extends Controller
 
         $data = $request->validate(['remarks' => ['nullable', 'string', 'max:255']]);
 
-        $pass = DB::transaction(fn () => $this->requests->approve($id, $request->user(), $data['remarks'] ?? null));
+        $pass = DB::transaction(fn () => $this->requests->approve($id, $request->user(), $data['remarks'] ?? null, $request->boolean('documents_reviewed')));
 
         return response()->json(['message' => 'Request approved. Visitor QR pass issued and the guest was notified.', 'pass' => self::passSummary($pass, CarbonImmutable::now())]);
     }
@@ -357,7 +372,8 @@ class VisitorAccessController extends Controller
         $visitor = $pass->visitor_id ? DB::table('visitors')->where('visitor_id', $pass->visitor_id)->first(['first_name', 'last_name']) : null;
         $vehicle = $pass->vehicle_id ? DB::table('vehicles as v')->leftJoin('vehicle_types as vt', 'vt.vehicle_type_id', '=', 'v.vehicle_type_id')
             ->where('v.vehicle_id', $pass->vehicle_id)->first(['v.plate_number', 'vt.type_name']) : null;
-        $requestStatus = $pass->request_id ? DB::table('visitor_requests')->where('request_id', $pass->request_id)->value('request_status') : null;
+        $visitRequest = $pass->request_id ? DB::table('visitor_requests')->where('request_id', $pass->request_id)->first() : null;
+        $requestStatus = $visitRequest?->request_status;
 
         return [
             'qr_pass_id' => $pass->qr_pass_id,
@@ -366,6 +382,8 @@ class VisitorAccessController extends Controller
             'stored_status' => $pass->pass_status,
             'request_id' => $pass->request_id,
             'request_status' => $requestStatus,
+            'driver' => $visitRequest ? VisitorRequestService::driverSummary($visitRequest) : null,
+            'documents' => $visitRequest ? VisitorRequestService::documentSummary($visitRequest) : null,
             'legacy' => !$pass->request_id,
             'visitor_name' => $visitor ? trim("{$visitor->first_name} {$visitor->last_name}") : null,
             'plate_number' => $vehicle->plate_number ?? null,

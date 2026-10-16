@@ -141,6 +141,8 @@ Route::post(
         Route::post('/passes/{id}/revoke', [VisitorAccessController::class, 'revoke'])->whereNumber('id');
     });
 
+    Route::get('/visitors/requests/{id}/documents/{kind}', [\App\Http\Controllers\Api\VisitorRequestDocumentController::class, 'show'])->whereNumber('id')->whereIn('kind', ['license', 'vehicle']);
+
     // Guest (visitor) account: own profile, vehicles, requests, passes and visits only.
     Route::prefix('guest')->group(function () {
         Route::get('/profile', [GuestAccountController::class, 'profile']);

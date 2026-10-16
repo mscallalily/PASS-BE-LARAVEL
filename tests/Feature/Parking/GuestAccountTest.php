@@ -14,10 +14,16 @@ use Laravel\Sanctum\Sanctum;
 
 class GuestAccountTest extends ParkingTestCase
 {
+    private function postGuestRequest(array $data)
+    {
+        return $this->post('/api/guest/requests', $data, ['Accept' => 'application/json']);
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
         Notification::fake();
+        \Illuminate\Support\Facades\Storage::fake('private');
     }
 
     private function registration(array $overrides = []): array
@@ -60,6 +66,8 @@ class GuestAccountTest extends ParkingTestCase
             'arrival_time' => '10:00',
             'departure_time' => sprintf('%02d:00', 10 + $hours),
             'purpose' => 'Meeting', 'visiting' => 'Registrar',
+            'driver_license_photo' => \Illuminate\Http\UploadedFile::fake()->image('license.jpg'),
+            'vehicle_photo' => \Illuminate\Http\UploadedFile::fake()->image('vehicle.jpg'),
             'driver_is_requester' => true,
             'driver_license_number' => 'N01-23-456789',
             'driver_license_expiry' => '2035-12-31',
@@ -69,7 +77,7 @@ class GuestAccountTest extends ParkingTestCase
 
     private function requestFuture(int $vehicleId, int $hours = 4): int
     {
-        return $this->postJson('/api/guest/requests', $this->requestData($vehicleId, $hours))->assertCreated()->json('request_id');
+        return $this->postGuestRequest($this->requestData($vehicleId, $hours))->assertCreated()->json('request_id');
     }
 
     public function test_same_day_past_dates_and_invalid_driver_details_are_rejected(): void
@@ -77,12 +85,12 @@ class GuestAccountTest extends ParkingTestCase
         $this->guest();
         $vehicle = $this->guestVehicle();
         $payload = $this->requestData($vehicle);
-        $this->postJson('/api/guest/requests', array_replace($payload, ['visit_date' => CampusTime::date()]))->assertUnprocessable()->assertJsonValidationErrors('visit_date');
-        $this->postJson('/api/guest/requests', array_replace($payload, ['visit_date' => CampusTime::now()->subDay()->toDateString()]))->assertUnprocessable()->assertJsonValidationErrors('visit_date');
-        $this->postJson('/api/guest/requests', array_replace($payload, ['departure_time' => '09:00']))->assertUnprocessable()->assertJsonValidationErrors('departure_time');
-        $this->postJson('/api/guest/requests', array_replace($payload, ['driver_is_requester' => false, 'driver_name' => '']))->assertUnprocessable()->assertJsonValidationErrors('driver_name');
-        $this->postJson('/api/guest/requests', array_replace($payload, ['driver_license_expiry' => CampusTime::now()->subDay()->toDateString()]))->assertUnprocessable()->assertJsonValidationErrors('driver_license_expiry');
-        $this->postJson('/api/guest/requests', array_replace($payload, ['passenger_count' => -1]))->assertUnprocessable()->assertJsonValidationErrors('passenger_count');
+        $this->postGuestRequest(array_replace($payload, ['visit_date' => CampusTime::date()]))->assertUnprocessable()->assertJsonValidationErrors('visit_date');
+        $this->postGuestRequest(array_replace($payload, ['visit_date' => CampusTime::now()->subDay()->toDateString()]))->assertUnprocessable()->assertJsonValidationErrors('visit_date');
+        $this->postGuestRequest(array_replace($payload, ['departure_time' => '09:00']))->assertUnprocessable()->assertJsonValidationErrors('departure_time');
+        $this->postGuestRequest(array_replace($payload, ['driver_is_requester' => false, 'driver_name' => '']))->assertUnprocessable()->assertJsonValidationErrors('driver_name');
+        $this->postGuestRequest(array_replace($payload, ['driver_license_expiry' => CampusTime::now()->subDay()->toDateString()]))->assertUnprocessable()->assertJsonValidationErrors('driver_license_expiry');
+        $this->postGuestRequest(array_replace($payload, ['passenger_count' => -1]))->assertUnprocessable()->assertJsonValidationErrors('passenger_count');
         $this->assertSame(0, DB::table('visitor_requests')->count());
     }
 
@@ -90,7 +98,7 @@ class GuestAccountTest extends ParkingTestCase
     {
         $this->guest();
         $payload = array_replace($this->requestData($this->guestVehicle()), ['driver_is_requester' => false, 'driver_name' => 'Juan Santos', 'passenger_count' => 3]);
-        $id = $this->postJson('/api/guest/requests', $payload)->assertCreated()->json('request_id');
+        $id = $this->postGuestRequest($payload)->assertCreated()->json('request_id');
         $stored = DB::table('visitor_requests')->where('request_id', $id)->first();
         $this->assertNotSame($payload['driver_license_number'], $stored->driver_license_encrypted);
         $this->getJson('/api/guest/requests')->assertOk()->assertJsonPath('data.0.driver.name', 'Juan Santos')->assertJsonPath('data.0.driver.license_reference', '•••• 6789')->assertJsonPath('data.0.driver.passenger_count', 3)->assertJsonPath('data.0.driver.identity_verified', false);
@@ -105,8 +113,60 @@ class GuestAccountTest extends ParkingTestCase
         $payload = $this->requestData($this->guestVehicle());
         $payload['arrival_time'] = '00:10';
         $payload['departure_time'] = '01:00';
-        $this->postJson('/api/guest/requests', $payload)->assertCreated();
+        $this->postGuestRequest($payload)->assertCreated();
         $this->getJson('/api/guest/requests')->assertJsonPath('data.0.driver.name', 'Ana Maria Cruz');
+    }
+
+    public function test_photos_are_required_private_and_scoped_to_the_request_owner(): void
+    {
+        $guest = $this->guest();
+        $payload = $this->requestData($this->guestVehicle());
+        $missing = $payload;
+        unset($missing['driver_license_photo'], $missing['vehicle_photo']);
+        $this->postGuestRequest($missing)->assertUnprocessable()->assertJsonValidationErrors(['driver_license_photo', 'vehicle_photo']);
+        $this->postGuestRequest(array_replace($payload, ['driver_license_photo' => \Illuminate\Http\UploadedFile::fake()->create('bad.pdf', 10, 'application/pdf')]))->assertUnprocessable()->assertJsonValidationErrors('driver_license_photo');
+        $this->postGuestRequest(array_replace($payload, ['vehicle_photo' => \Illuminate\Http\UploadedFile::fake()->image('large.jpg')->size(5121)]))->assertUnprocessable()->assertJsonValidationErrors('vehicle_photo');
+        $id = $this->postGuestRequest($payload)->assertCreated()->json('request_id');
+        $row = DB::table('visitor_requests')->where('request_id', $id)->first();
+        \Illuminate\Support\Facades\Storage::disk('private')->assertExists($row->driver_license_photo_path);
+        $this->get('/api/visitors/requests/' . $id . '/documents/license', ['Accept' => 'application/json'])->assertOk();
+        $this->guest();
+        $this->getJson('/api/visitors/requests/' . $id . '/documents/license')->assertForbidden();
+        \Laravel\Sanctum\Sanctum::actingAs($this->user('student'));
+        $this->getJson('/api/visitors/requests/' . $id . '/documents/license')->assertForbidden();
+        $this->actingAsStaff();
+        $this->getJson('/api/visitors/requests/' . $id . '/documents/license')->assertOk();
+        $this->actingAsAdmin();
+        $this->getJson('/api/visitors/requests/' . $id . '/documents/vehicle')->assertOk();
+        $this->getJson('/api/visitors/requests/' . $id . '/documents/unknown')->assertNotFound();
+    }
+
+    public function test_approval_requires_stored_photos_and_explicit_document_review(): void
+    {
+        $this->guest();
+        $id = $this->requestFuture($this->guestVehicle());
+        $this->actingAsAdmin();
+        $this->postJson("/api/visitors/requests/{$id}/approve")->assertUnprocessable()->assertJsonValidationErrors('documents_reviewed');
+        $this->assertFalse(DB::table('qr_passes')->where('request_id', $id)->exists());
+        $this->postJson("/api/visitors/requests/{$id}/approve", ['documents_reviewed' => true])->assertOk();
+        $this->assertNotNull(DB::table('visitor_requests')->where('request_id', $id)->value('documents_reviewed_at'));
+        $this->guest();
+        $missingId = $this->requestFuture($this->guestVehicle());
+        $path = DB::table('visitor_requests')->where('request_id', $missingId)->value('vehicle_photo_path');
+        \Illuminate\Support\Facades\Storage::disk('private')->delete($path);
+        $this->actingAsAdmin();
+        $this->postJson("/api/visitors/requests/{$missingId}/approve", ['documents_reviewed' => true])->assertStatus(409);
+        $this->assertFalse(DB::table('qr_passes')->where('request_id', $missingId)->exists());
+    }
+
+    public function test_rejected_duplicate_submission_does_not_leave_orphan_photos(): void
+    {
+        $this->guest();
+        $payload = $this->requestData($this->guestVehicle());
+        $this->postGuestRequest($payload)->assertCreated();
+        $before = \Illuminate\Support\Facades\Storage::disk('private')->allFiles();
+        $this->postGuestRequest($payload)->assertStatus(409);
+        $this->assertSame($before, \Illuminate\Support\Facades\Storage::disk('private')->allFiles());
     }
 
     public function test_registration_creates_account_role_profile_and_linked_visitor(): void
@@ -235,7 +295,7 @@ class GuestAccountTest extends ParkingTestCase
         $this->guest();
         $this->assertSame([], $this->getJson('/api/guest/vehicles')->json('data'));
         $this->assertSame([], $this->getJson('/api/guest/requests')->json('data'));
-        $this->postJson('/api/guest/requests', [
+        $this->postGuestRequest([
             ...$this->requestData($otherVehicle),
         ])->assertUnprocessable()->assertJsonValidationErrors('vehicle_id');
         $this->postJson("/api/guest/requests/{$otherRequest}/cancel")->assertNotFound();
@@ -263,10 +323,10 @@ class GuestAccountTest extends ParkingTestCase
         $id = $this->requestFuture($vehicle);
 
         $this->actingAsStaff();
-        $this->postJson("/api/visitors/requests/{$id}/approve")->assertForbidden();
+        $this->postJson("/api/visitors/requests/{$id}/approve", ['documents_reviewed' => true])->assertForbidden();
 
         $this->actingAsAdmin();
-        $this->postJson("/api/visitors/requests/{$id}/approve")->assertOk();
+        $this->postJson("/api/visitors/requests/{$id}/approve", ['documents_reviewed' => true])->assertOk();
 
         Sanctum::actingAs($guest);
         $this->assertSame('scheduled', $this->getJson('/api/guest/passes')->json('data.0.status'));
@@ -324,10 +384,10 @@ class GuestAccountTest extends ParkingTestCase
         $approved = $this->requestFuture($vehicle2, 1);
 
         $this->actingAsAdmin();
-        $pass = $this->postJson("/api/visitors/requests/{$approved}/approve")->assertOk()->json('pass');
+        $pass = $this->postJson("/api/visitors/requests/{$approved}/approve", ['documents_reviewed' => true])->assertOk()->json('pass');
 
         $this->travel(2)->days();
-        $this->postJson("/api/visitors/requests/{$late}/approve")->assertStatus(409);
+        $this->postJson("/api/visitors/requests/{$late}/approve", ['documents_reviewed' => true])->assertStatus(409);
         $r = $this->gate('entry', ['qr_pass_code' => $pass['pass_code']]);
         $this->assertSame('denied', $r['status']);
         $this->assertSame('Visitor QR pass has expired.', $r['reason']);

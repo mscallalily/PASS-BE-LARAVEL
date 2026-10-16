@@ -87,13 +87,14 @@ class NotificationsAndLayoutTest extends ParkingTestCase
         ])->assertCreated();
         $guest = User::where('email', 'revoke.guest@example.com')->first();
         $guest->markEmailAsVerified();
+        \Illuminate\Support\Facades\Storage::fake('private');
         Sanctum::actingAs($guest);
         $vehicle = $this->postJson('/api/guest/vehicles', ['plate_number' => 'RVK 1001', 'vehicle_type_id' => DB::table('vehicle_types')->where('type_code', 'sedan')->value('vehicle_type_id')])->json('vehicle_id');
         $now = CampusTime::now();
-        $id = $this->postJson('/api/guest/requests', ['vehicle_id' => $vehicle, 'visit_date' => $now->addDay()->toDateString(), 'arrival_time' => '00:00', 'departure_time' => '23:59', 'purpose' => 'x', 'visiting' => 'y', 'driver_is_requester' => true, 'driver_license_number' => 'N01-23-456789', 'driver_license_expiry' => '2035-12-31', 'passenger_count' => 0])->json('request_id');
+        $id = $this->post('/api/guest/requests', ['vehicle_id' => $vehicle, 'visit_date' => $now->addDay()->toDateString(), 'arrival_time' => '00:00', 'departure_time' => '23:59', 'purpose' => 'x', 'visiting' => 'y', 'driver_is_requester' => true, 'driver_license_number' => 'N01-23-456789', 'driver_license_expiry' => '2035-12-31', 'passenger_count' => 0, 'driver_license_photo' => \Illuminate\Http\UploadedFile::fake()->image('license.jpg'), 'vehicle_photo' => \Illuminate\Http\UploadedFile::fake()->image('vehicle.jpg')], ['Accept' => 'application/json'])->json('request_id');
 
         $this->actingAsAdmin();
-        $pass = $this->postJson("/api/visitors/requests/{$id}/approve")->json('pass');
+        $pass = $this->postJson("/api/visitors/requests/{$id}/approve", ['documents_reviewed' => true])->json('pass');
         $this->actingAsStaff();
         $this->postJson("/api/visitors/passes/{$pass['qr_pass_id']}/revoke", ['reason' => 'Event cancelled'])->assertOk();
 
