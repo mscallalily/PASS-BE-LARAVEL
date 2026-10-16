@@ -123,14 +123,16 @@ class DashboardConsistencyTest extends ParkingTestCase
             'full_name' => 'Sync Guest', 'email' => 'sync.guest@example.com', 'contact_number' => '09170000009',
             'password' => 'SyncGuest2026', 'password_confirmation' => 'SyncGuest2026', 'agree' => true,
         ])->assertCreated();
-        Sanctum::actingAs(\App\Models\User::where('email', 'sync.guest@example.com')->first());
-        $guestBefore = $this->getJson('/api/sync/revision')->json('topics');
+        $guest = \App\Models\User::where('email', 'sync.guest@example.com')->firstOrFail();
+        $guest->markEmailAsVerified();
+        Sanctum::actingAs($guest);
+        $guestBefore = $this->getJson('/api/sync/revision')->assertOk()->json('topics');
         $this->assertArrayNotHasKey('violations', $guestBefore);
 
         Sanctum::actingAs($staff);
         $this->gate('exit', ['rfid_tag_uid' => $car['tag']]);
 
         Sanctum::actingAs(\App\Models\User::where('email', 'sync.guest@example.com')->first());
-        $this->assertSame($guestBefore, $this->getJson('/api/sync/revision')->json('topics'));
+        $this->assertSame($guestBefore, $this->getJson('/api/sync/revision')->assertOk()->json('topics'));
     }
 }
