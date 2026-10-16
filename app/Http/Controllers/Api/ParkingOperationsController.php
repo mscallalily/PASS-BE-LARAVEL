@@ -21,9 +21,7 @@ use Illuminate\Validation\Rule;
  */
 class ParkingOperationsController extends Controller
 {
-    public function __construct(private ParkingAccessService $access)
-    {
-    }
+    public function __construct(private ParkingAccessService $access) {}
 
     private function forbidden(Request $request): ?JsonResponse
     {
@@ -107,7 +105,7 @@ class ParkingOperationsController extends Controller
 
         $area = DB::table('parking_areas')->where('parking_area_id', $areaId)->first(['parking_area_id', 'area_code', 'area_name']);
 
-        if (!$area) {
+        if (! $area) {
             return response()->json(['message' => 'Parking area not found.'], 404);
         }
 
@@ -163,6 +161,41 @@ class ParkingOperationsController extends Controller
             'corrections' => ParkingMapLayout::corrections(),
             'generated_at' => now()->toIso8601String(),
         ]);
+    }
+
+    /** Signed-in availability only: never select identities, credentials or incident records. */
+    public function availabilityMap(): JsonResponse
+    {
+        $scale = ParkingMapLayout::SCALE;
+        $held = DB::table('parking_transactions')->where('transaction_status', 'active')
+            ->whereNotNull('slot_id')->select('slot_id')->distinct();
+        $slots = DB::table('parking_slots as s')
+            ->join('parking_zones as z', 'z.zone_id', '=', 's.zone_id')
+            ->join('parking_areas as a', 'a.parking_area_id', '=', 'z.parking_area_id')
+            ->leftJoinSub($held, 'held', fn ($join) => $join->on('held.slot_id', '=', 's.slot_id'))
+            ->where('a.is_active', true)->orderBy('a.area_code')->orderBy('s.slot_code')
+            ->get(['s.slot_id', 's.slot_code', 's.slot_status', 's.pos_x', 's.pos_y', 's.slot_width', 's.slot_height', 's.rotation_deg', 's.is_pwd_slot',
+                'a.parking_area_id', 'a.area_code', 'a.area_name', 'held.slot_id as held_slot'])
+            ->map(fn ($s) => [
+                'slot_id' => $s->slot_id, 'slot_code' => $s->slot_code,
+                'parking_area_id' => $s->parking_area_id, 'area_code' => $s->area_code, 'area_name' => $s->area_name,
+                'slot_status' => $s->slot_status,
+                'status' => $s->held_slot ? 'occupied' : (in_array($s->slot_status, ['maintenance', 'disabled'], true) ? 'maintenance' : 'available'),
+                'placed' => $s->pos_x !== null && $s->pos_y !== null,
+                'x' => $s->pos_x !== null ? $s->pos_x / $scale : null,
+                'y' => $s->pos_y !== null ? $s->pos_y / $scale : null,
+                'w' => $s->slot_width !== null ? $s->slot_width / $scale : null,
+                'h' => $s->slot_height !== null ? $s->slot_height / $scale : null,
+                'rotation' => (int) $s->rotation_deg, 'accessible' => (bool) $s->is_pwd_slot,
+            ]);
+        $areas = ParkingStats::areas();
+
+        return response()->json([
+            'view_box' => ParkingMapLayout::VIEW_BOX, 'geometry' => ParkingMapLayout::geometry(),
+            'extra_bays' => array_values(array_filter(ParkingMapLayout::bays(), fn ($b) => $b['slot_number'] === null)),
+            'slots' => $slots, 'areas' => array_values($areas), 'overall' => ParkingStats::overall($areas),
+            'generated_at' => now()->toIso8601String(),
+        ])->header('Cache-Control', 'private, no-store');
     }
 
     /**
@@ -265,7 +298,7 @@ class ParkingOperationsController extends Controller
         return DB::transaction(function () use ($slotId, $data, $request) {
             $slot = DB::table('parking_slots')->where('slot_id', $slotId)->lockForUpdate()->first();
 
-            if (!$slot) {
+            if (! $slot) {
                 return response()->json(['message' => 'Parking slot not found.'], 404);
             }
 
@@ -462,8 +495,8 @@ class ParkingOperationsController extends Controller
 
         $slotId = $data['slot_id'] ?? DB::table('parking_slots')->where('slot_code', strtoupper(trim($data['slot_code'])))->value('slot_id');
 
-        if (!$slotId) {
-            return response()->json(['message' => 'Slot ' . ($data['slot_code'] ?? '') . ' does not exist.', 'errors' => ['slot_code' => ['Unknown slot code.']]], 422);
+        if (! $slotId) {
+            return response()->json(['message' => 'Slot '.($data['slot_code'] ?? '').' does not exist.', 'errors' => ['slot_code' => ['Unknown slot code.']]], 422);
         }
 
         $result = $this->access->reportObservedSlot($transactionId, (int) $slotId, $request->user());

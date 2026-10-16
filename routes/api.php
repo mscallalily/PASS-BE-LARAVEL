@@ -116,6 +116,7 @@ Route::post(
     Route::prefix('parking')->group(function () {
         Route::get('/overview', [ParkingOperationsController::class, 'overview']);
         Route::get('/availability', [ParkingOperationsController::class, 'availability']);
+        Route::get('/availability-map', [ParkingOperationsController::class, 'availabilityMap']);
         Route::get('/my-session', [ParkingOperationsController::class, 'mySession']);
         Route::get('/areas/{areaId}/slots', [ParkingOperationsController::class, 'slots'])->whereNumber('areaId');
         Route::get('/map', [ParkingOperationsController::class, 'map']);

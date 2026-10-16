@@ -129,7 +129,7 @@ class ParkingMapLayout
                 $bound = $row['bind'][$i];
                 $kind = $row['kinds'][$i] ?? ($bound ? 'slot' : 'unbound');
                 $note = match (true) {
-                    $kind === 'pwd' => 'Accessible (PWD) bay, unnumbered on the drawing' . ($bound ? "; read as slot {$bound}" : ''),
+                    $kind === 'pwd' => 'Accessible (PWD) bay, unnumbered on the drawing'.($bound ? "; read as slot {$bound}" : ''),
                     $kind === 'aisle' => 'Hatched access aisle',
                     $bound !== null && (string) $bound !== (string) $label => "Printed \"{$label}\"; read as {$bound} (misprint)",
                     $bound === null && is_int($label) && $label > $capacity => "Printed \"{$label}\"; beyond the {$capacity}-slot capacity",
@@ -228,14 +228,8 @@ class ParkingMapLayout
             'islands' => [
                 ['polygon' => [[84, 166], [108, 166], [143, 258], [104, 258]]],
             ],
-            // Slots with no printed position are shown here, outside the
-            // drawn bays, so no physical position is invented for them.
-            'trays' => [
-                ['area' => 'MC', 'origin' => [186, 270], 'columns' => 10, 'bay' => [9, 15], 'gap' => 1.5,
-                    'title' => 'NOT ON DYCI DRAWING', 'note' => 'Motorcycle slots without a printed position - verify location'],
-                ['area' => 'CAR', 'origin' => [300, 262], 'columns' => 3, 'bay' => [17, 24], 'gap' => 2,
-                    'title' => 'NOT ON DYCI DRAWING', 'note' => 'Car slots without a printed position - verify location'],
-            ],
+            // Unmapped inventory is not rendered as invented physical bays.
+            'trays' => [],
         ];
     }
 
@@ -245,8 +239,8 @@ class ParkingMapLayout
     public static function ambiguities(): array
     {
         return [
-            'Motorcycle slots M-23 to M-42 are not printed anywhere on the drawing, so they have no map position; they appear in a labelled tray just below the motorcycle area.',
-            'Car slots C-38 and C-40 are not printed on the drawing (row 22-41 shows 37, 39, 41, then the PWD bay); they appear in a labelled tray next to the motorcycle tray, below the parking areas.',
+            'Motorcycle slots M-23 to M-42 are not printed anywhere on the drawing, so they have no map position; their inventory records are retained without drawing additional bays.',
+            'Car slots C-38 and C-40 are not printed on the drawing (row 22-41 shows 37, 39, 41, then the PWD bay); their inventory records are retained without drawing additional bays.',
             'The unnumbered PWD bay directly after 41 is read as C-42, the accessible slot within the 55-slot capacity. Automatic assignment gives it out last.',
             'The car area is titled "55 slots" but shows about 79 painted bays numbered up to 84; bays beyond 55 are drawn as unnumbered stalls and are not PASS slots.',
             'The motorcycle columns contain duplicate or out-of-order numbers; obvious misprints were read as the missing number (see corrections) and the remaining duplicates are drawn but not bound.',
@@ -259,7 +253,7 @@ class ParkingMapLayout
     public static function corrections(): array
     {
         return array_values(array_filter(array_map(
-            fn ($b) => $b['slot_number'] !== null && !$b['pwd'] && (string) $b['slot_number'] !== $b['label']
+            fn ($b) => $b['slot_number'] !== null && ! $b['pwd'] && (string) $b['slot_number'] !== $b['label']
                 ? sprintf('%s: printed "%s" read as %s-%02d', $b['row'], $b['label'], $b['area'] === 'CAR' ? 'C' : 'M', $b['slot_number'])
                 : null,
             self::bays()
