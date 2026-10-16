@@ -18,6 +18,9 @@ use App\Http\Controllers\Api\VisitorAccessController;
 use App\Http\Controllers\Api\DeviceSimulatorController;
 use App\Http\Controllers\Api\GuestAccountController;
 use App\Http\Controllers\Api\SyncController;
+use App\Http\Controllers\Api\AdminDashboardController;
+use App\Http\Controllers\Api\SystemSettingsController;
+use App\Http\Controllers\Api\ParkingSlotSimulationController;
 
 
 
@@ -180,6 +183,13 @@ Route::post(
 
     // Admin user management
     Route::prefix('admin')->group(function () {
+        Route::get('/system-settings', [SystemSettingsController::class, 'index']);
+        Route::put('/system-settings', [SystemSettingsController::class, 'update']);
+        Route::post('/system-settings/logo', [SystemSettingsController::class, 'uploadLogo']);
+        // Separate development slot simulation; not parking transaction occupancy.
+        Route::get('/parking/slots', [ParkingSlotSimulationController::class, 'index']);
+        Route::patch('/parking/slots', [ParkingSlotSimulationController::class, 'update']);
+
         Route::get('/users', [UserManagementController::class, 'index']);
 
         Route::patch(
