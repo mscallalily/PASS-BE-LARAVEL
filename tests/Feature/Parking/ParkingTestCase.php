@@ -112,6 +112,7 @@ abstract class ParkingTestCase extends TestCase
         ]);
 
         $tag = $this->rfidTag($user->user_id, $vehicleId);
+        DB::table('user_vehicle_selections')->insertOrIgnore(['user_id' => $user->user_id, 'vehicle_id' => $vehicleId, 'updated_at' => now()]);
 
         return ['user' => $user, 'vehicle_id' => $vehicleId, 'plate' => $plate, 'tag' => $tag, 'driver_id' => $driverId];
     }

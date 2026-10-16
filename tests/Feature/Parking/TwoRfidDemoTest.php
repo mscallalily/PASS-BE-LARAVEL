@@ -18,6 +18,10 @@ class TwoRfidDemoTest extends ParkingTestCase
         $this->assertSame('granted', $this->gate('entry', ['rfid_tag_uid' => 'SIM-TWO-CAR-001'])['status']);
         $this->assertSame('denied', $this->gate('entry', ['rfid_tag_uid' => 'SIM-TWO-MC-002'])['status']);
         $this->assertSame('completed', $this->gate('exit', ['rfid_tag_uid' => 'SIM-TWO-CAR-001'])['status']);
+        \Laravel\Sanctum\Sanctum::actingAs(\App\Models\User::findOrFail($owner));
+        $bike = DB::table('vehicles')->where('plate_number', 'DEMO-MC-002')->value('vehicle_id');
+        $this->postJson("/api/vehicles/{$bike}/select-for-use")->assertOk();
+        $this->actingAsStaff();
         $this->assertSame('granted', $this->gate('entry', ['rfid_tag_uid' => 'SIM-TWO-MC-002'])['status']);
     }
 }

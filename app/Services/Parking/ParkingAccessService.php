@@ -507,6 +507,11 @@ class ParkingAccessService
                 return "Owner account is " . ($owner->account_status ?? 'missing') . '.';
             }
 
+            $selectedId = DB::table('user_vehicle_selections')->where('user_id', $vehicle->owner_user_id)->value('vehicle_id');
+            if ((int) $selectedId !== (int) $vehicle->vehicle_id) {
+                return 'This vehicle is inactive for entry. Select it using “Use this vehicle” in My Vehicles before arriving.';
+            }
+
             if ($id['assignment'] && (int) $id['assignment']->user_id !== (int) $vehicle->owner_user_id
                 && !DB::table('vehicle_driver as vd')->join('drivers as d', 'd.driver_id', '=', 'vd.driver_id')
                     ->where('vd.vehicle_id', $vehicle->vehicle_id)->where('d.user_id', $id['assignment']->user_id)->exists()) {

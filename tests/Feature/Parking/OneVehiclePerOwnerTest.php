@@ -28,6 +28,7 @@ class OneVehiclePerOwnerTest extends ParkingTestCase
         $other = $this->campusVehicle();
         $this->assertSame('granted', $this->gate('entry', ['rfid_tag_uid' => $other['tag']])['status']);
         $this->assertSame('completed', $this->gate('exit', ['rfid_tag_uid' => $car['tag']])['status']);
+        DB::table('user_vehicle_selections')->where('user_id', $car['user']->user_id)->update(['vehicle_id' => $bike['vehicle_id']]);
         $this->assertSame('granted', $this->gate('entry', ['rfid_tag_uid' => $bike['tag']])['status']);
     }
 

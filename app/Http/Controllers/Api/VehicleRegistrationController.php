@@ -30,11 +30,15 @@ class VehicleRegistrationController extends Controller
 
         $query = Vehicle::with(['type', 'owner.profile', 'authorizations' => fn ($q) => $q->orderByDesc('authorization_id')]);
         if (!$staff) $query->where('owner_user_id', $user->user_id);
-        $rows = $query->orderByDesc('vehicle_id')->get()->map(function (Vehicle $vehicle) {
+        $selectionIds = DB::table('user_vehicle_selections')->pluck('vehicle_id', 'user_id');
+        $insideOwnerIds = DB::table('parking_transactions as t')->join('vehicles as v', 'v.vehicle_id', '=', 't.vehicle_id')->where('t.transaction_status', 'active')->whereNotNull('v.owner_user_id')->distinct()->pluck('v.owner_user_id')->all();
+        $rows = $query->orderByDesc('vehicle_id')->get()->map(function (Vehicle $vehicle) use ($selectionIds, $insideOwnerIds) {
             $auth = $vehicle->authorizations->first();
             $profile = $vehicle->owner?->profile;
             return [
                 'id' => (string) $vehicle->vehicle_id,
+                'selectedForUse' => (int) ($selectionIds[$vehicle->owner_user_id] ?? 0) === (int) $vehicle->vehicle_id,
+                'switchLocked' => in_array((int) $vehicle->owner_user_id, array_map('intval', $insideOwnerIds), true),
                 'hasPhoto' => (bool) $vehicle->vehicle_photo_path,
                 'plate' => $vehicle->plate_number,
                 'owner' => trim(($profile?->first_name ?? '').' '.($profile?->last_name ?? '')),
@@ -53,6 +57,32 @@ class VehicleRegistrationController extends Controller
             ];
         });
         return response()->json(['vehicles' => $rows]);
+    }
+
+    public function selectForUse(Request $request, int $id): JsonResponse
+    {
+        $user = $request->user();
+        abort_unless($this->regular($user), 403);
+        return DB::transaction(function () use ($user, $id, $request) {
+            // Same owner lock as gate entry: a selection cannot change mid-scan.
+            DB::table('users')->where('user_id', $user->user_id)->lockForUpdate()->first();
+            $vehicle = DB::table('vehicles')->where('vehicle_id', $id)->where('owner_user_id', $user->user_id)->whereNull('deleted_at')->first();
+            abort_unless($vehicle, 404);
+            $inside = DB::table('parking_transactions as t')->join('vehicles as v', 'v.vehicle_id', '=', 't.vehicle_id')
+                ->where('v.owner_user_id', $user->user_id)->where('t.transaction_status', 'active')->lockForUpdate()->first(['t.transaction_id']);
+            abort_if($inside, 409, 'Record your parked vehicle’s exit before switching vehicles.');
+            $today = CampusTime::date();
+            $authorized = DB::table('vehicle_authorizations')->where('vehicle_id', $id)->orderByDesc('authorization_id')->first();
+            abort_unless($vehicle->registration_status === 'registered' && $authorized && $authorized->authorization_status === 'approved'
+                && (!$authorized->valid_from || $authorized->valid_from <= $today) && (!$authorized->valid_until || $authorized->valid_until >= $today), 422, 'Select a currently authorized vehicle.');
+            $rfid = DB::table('rfid_assignments as a')->join('rfid_tags as t', 't.rfid_id', '=', 'a.rfid_id')
+                ->where('a.vehicle_id', $id)->where('a.assignment_status', 'active')->whereNull('a.unassigned_at')->where('t.tag_status', 'assigned')
+                ->where(fn ($q) => $q->whereNull('a.valid_until')->orWhere('a.valid_until', '>=', $today))->exists();
+            abort_unless($rfid, 422, 'This vehicle needs an active assigned RFID first.');
+            DB::table('user_vehicle_selections')->updateOrInsert(['user_id' => $user->user_id], ['vehicle_id' => $id, 'updated_at' => now()]);
+            DB::table('audit_logs')->insert(['user_id' => $user->user_id, 'actor_label' => $user->user_code, 'action' => 'vehicle_selected_for_use', 'auditable_type' => 'vehicles', 'auditable_id' => $id, 'ip_address' => $request->ip(), 'created_at' => now()]);
+            return response()->json(['message' => $vehicle->plate_number.' is selected for use. Your other vehicles are inactive for entry.']);
+        });
     }
 
     public function store(Request $request): JsonResponse

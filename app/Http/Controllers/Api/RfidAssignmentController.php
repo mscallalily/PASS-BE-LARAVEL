@@ -67,6 +67,7 @@ class RfidAssignmentController extends Controller
                     'valid_until' => $data['valid_until'] ?? null, 'assignment_status' => 'active', 'created_at' => now(), 'updated_at' => now(),
                 ], 'assignment_id');
                 DB::table('rfid_tags')->where('rfid_id', $tagId)->update(['tag_status' => 'assigned', 'updated_at' => now()]);
+                DB::table('user_vehicle_selections')->insertOrIgnore(['user_id' => $owner->user_id, 'vehicle_id' => $vehicle->vehicle_id, 'updated_at' => now()]);
                 $this->audit($request, $id, 'rfid_assigned');
                 return $id;
             });
