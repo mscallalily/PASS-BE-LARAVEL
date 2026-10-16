@@ -2,12 +2,14 @@
 
 namespace Tests\Feature\Parking;
 
+use App\Services\Parking\ParkingLayoutUpdater;
 use Laravel\Sanctum\Sanctum;
 
 class AvailabilityMapTest extends ParkingTestCase
 {
     public function test_signed_in_map_shares_geometry_and_status_but_excludes_personal_records(): void
     {
+        app(ParkingLayoutUpdater::class)->apply();
         $this->actingAsStaff();
         $car = $this->campusVehicle();
         $entry = $this->gate('entry', ['rfid_tag_uid' => $car['tag']]);
@@ -20,7 +22,7 @@ class AvailabilityMapTest extends ParkingTestCase
             $this->assertSame([], $map['geometry']['trays']);
             $this->assertSame($staff['overall'], $map['overall']);
             $this->assertCount(139, $map['slots']);
-            $this->assertCount(22, array_filter($map['slots'], fn ($slot) => ! $slot['placed']));
+            $this->assertCount(2, array_filter($map['slots'], fn ($slot) => ! $slot['placed']));
             $this->assertSame('occupied', collect($map['slots'])->firstWhere('slot_code', $entry['slot_code'])['status']);
             $this->assertStringNotContainsString($car['plate'], $response->getContent());
             foreach ($map['slots'] as $slot) {
