@@ -66,9 +66,10 @@ class EmailCodeVerificationTest extends ParkingTestCase
         $this->postJson('/api/email/verify-code', ['email' => $user->email, 'code' => $new])->assertOk();
     }
 
-    public function test_verified_pending_user_can_login_but_only_access_own_status_and_logout(): void
+    public function test_verified_pending_user_can_login_but_only_access_own_status_until_approval(): void
     {
         $user = $this->user('student', ['account_status' => 'pending', 'email_verified_at' => null]);
+        $user->roles()->attach(DB::table('roles')->where('role_code', 'student')->value('role_id'), ['assigned_at' => now()]);
         $this->postJson('/api/login', ['identifier' => $user->email, 'password' => 'password'])->assertForbidden()->assertJsonPath('code', 'email_unverified');
         $user->markEmailAsVerified();
         $this->postJson('/api/login', ['identifier' => $user->email, 'password' => 'password'])->assertOk()->assertJsonPath('user.accountStatus', 'pending');
@@ -77,6 +78,7 @@ class EmailCodeVerificationTest extends ParkingTestCase
         $this->getJson('/api/vehicles')->assertForbidden()->assertJsonPath('code', 'account_not_active');
         $this->getJson('/api/admin/users')->assertForbidden();
         $user->forceFill(['account_status' => 'active'])->save();
+        Sanctum::actingAs($user->fresh());
         $this->getJson('/api/vehicles')->assertOk();
     }
 
