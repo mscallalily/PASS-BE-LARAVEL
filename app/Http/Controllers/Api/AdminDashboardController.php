@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Services\Parking\ParkingStats;
+use App\Support\CampusTime;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -19,7 +20,7 @@ class AdminDashboardController extends Controller
             ->where('tag_status', 'assigned')
             ->count();
 
-        $today = now()->toDateString();
+        [$start, $end] = CampusTime::dayRange();
 
         return response()->json([
             'summary' => [
@@ -49,11 +50,13 @@ class AdminDashboardController extends Controller
 
             'today_activity' => [
                 'entries' => DB::table('parking_transactions')
-                    ->whereDate('entry_datetime', $today)
+                    ->where('entry_datetime', '>=', $start)->where('entry_datetime', '<', $end)
+                    ->where('transaction_status', '<>', 'cancelled')
                     ->count(),
 
                 'exits' => DB::table('parking_transactions')
-                    ->whereDate('exit_datetime', $today)
+                    ->where('exit_datetime', '>=', $start)->where('exit_datetime', '<', $end)
+                    ->whereIn('transaction_status', ['completed', 'force_closed'])
                     ->count(),
             ],
 

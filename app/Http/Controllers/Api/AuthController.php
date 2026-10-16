@@ -347,6 +347,7 @@ $licenseId = DB::table('driver_licenses')->insertGetId([
                     ]);
                 }
 
+                \App\Support\ActivityAudit::record($request, $user, 'account_registered', 'users', (int) $user->user_id, null, ['account_status' => $user->account_status, 'user_type' => $user->user_type]);
                 return $user;
             });
 
@@ -463,6 +464,8 @@ $licenseId = DB::table('driver_licenses')->insertGetId([
             'last_login_at' => now(),
         ])->save();
 
+        \App\Support\ActivityAudit::record($request, $user, 'login', 'users', (int) $user->user_id);
+
         return response()->json([
             'token' => $user->createToken('web')->plainTextToken,
             'user' => $this->userPayload($user),
@@ -478,6 +481,7 @@ $licenseId = DB::table('driver_licenses')->insertGetId([
 
     public function logout(Request $request): JsonResponse
     {
+        \App\Support\ActivityAudit::record($request, $request->user(), 'logout', 'users', (int) $request->user()->user_id);
         $request->user()->currentAccessToken()->delete();
 
         return response()->json([

@@ -184,6 +184,8 @@ Route::post(
 
     // Admin user management
     Route::prefix('admin')->group(function () {
+        Route::get('/reports', [\App\Http\Controllers\Api\AdminReportController::class, 'index']);
+        Route::get('/reports/export', [\App\Http\Controllers\Api\AdminReportController::class, 'export'])->middleware('throttle:10,1,admin-report-export:');
         Route::get('/dashboard', [AdminDashboardController::class, 'index']);
         Route::get('/parking/occupancy', [AdminDashboardController::class, 'occupancy']);
         Route::get('/audit-logs', [AuditLogController::class, 'index']);

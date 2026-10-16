@@ -51,7 +51,8 @@ class SystemSettingsController extends Controller
             'date_format' => 'required|in:MM/DD/YYYY,DD/MM/YYYY,YYYY-MM-DD',
         ])->validate();
 
-        DB::transaction(function () use ($validated, $user) {
+        DB::transaction(function () use ($validated, $user, $request) {
+            $before = DB::table('system_settings')->whereIn('setting_key', self::GENERAL_KEYS)->pluck('setting_value', 'setting_key')->all();
             foreach ($validated as $key => $value) {
                 DB::table('system_settings')->updateOrInsert(
                     ['setting_key' => $key],
@@ -65,6 +66,7 @@ class SystemSettingsController extends Controller
                     ]
                 );
             }
+            \App\Support\ActivityAudit::record($request, $user, 'settings_updated', 'system_settings', 0, $before, $validated);
         });
 
         return response()->json([

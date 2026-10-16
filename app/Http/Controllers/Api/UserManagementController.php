@@ -116,8 +116,12 @@ class UserManagementController extends Controller
             ], 409);
         }
 
-        $user->account_status = 'active';
-        $user->save();
+        \Illuminate\Support\Facades\DB::transaction(function () use ($user, $request, $actor) {
+            $before = ['account_status' => $user->account_status];
+            $user->account_status = 'active';
+            $user->save();
+            \App\Support\ActivityAudit::record($request, $actor, 'account_approved', 'users', (int) $user->user_id, $before, ['account_status' => $user->account_status]);
+        });
 
         return response()->json([
             'message' => 'User account approved successfully.',
@@ -150,8 +154,12 @@ class UserManagementController extends Controller
         }
 
         // The database enum has no "rejected" value.
-        $user->account_status = 'deactivated';
-        $user->save();
+        \Illuminate\Support\Facades\DB::transaction(function () use ($user, $request, $actor) {
+            $before = ['account_status' => $user->account_status];
+            $user->account_status = 'deactivated';
+            $user->save();
+            \App\Support\ActivityAudit::record($request, $actor, 'account_rejected', 'users', (int) $user->user_id, $before, ['account_status' => $user->account_status]);
+        });
 
         return response()->json([
             'message' => 'Account rejected and deactivated.',

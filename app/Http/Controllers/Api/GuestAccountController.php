@@ -63,7 +63,7 @@ class GuestAccountController extends Controller
         $email = strtolower(trim($data['email']));
 
         try {
-            $userId = DB::transaction(function () use ($data, $first, $last, $email, $roleId) {
+            $userId = DB::transaction(function () use ($data, $first, $last, $email, $roleId, $request) {
                 $userId = DB::table('users')->insertGetId([
                     'user_code' => self::newGuestCode(),
                     'email' => $email,
@@ -88,6 +88,7 @@ class GuestAccountController extends Controller
                     'created_at' => now(), 'updated_at' => now(),
                 ]);
 
+                \App\Support\ActivityAudit::record($request, User::findOrFail($userId), 'guest_registered', 'users', (int) $userId, null, ['account_status' => 'active', 'email_verified' => false]);
                 return $userId;
             });
         } catch (UniqueConstraintViolationException) {
