@@ -38,7 +38,9 @@ class EmailVerificationController extends Controller
         $user->markEmailAsVerified();
 
         return response()->json([
-            'message' => 'Email verified successfully. Your account is still pending administrator approval.',
+            'message' => $user->isGuest()
+                ? 'Email verified successfully. You can now sign in and submit a visitor parking request. A QR pass requires request approval.'
+                : 'Email verified successfully. Your account is still pending administrator approval.',
         ]);
     }
 }

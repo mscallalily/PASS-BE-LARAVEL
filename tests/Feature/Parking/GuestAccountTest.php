@@ -7,10 +7,19 @@ use App\Support\CampusTime;
 use Database\Seeders\GuestDemoSeeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\URL;
+use App\Notifications\PassEmailVerificationNotification;
 use Laravel\Sanctum\Sanctum;
 
 class GuestAccountTest extends ParkingTestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Notification::fake();
+    }
+
     private function registration(array $overrides = []): array
     {
         return $overrides + [
@@ -29,6 +38,7 @@ class GuestAccountTest extends ParkingTestCase
         $data = $this->registration();
         $this->postJson('/api/guest/register', $data)->assertCreated();
         $user = User::where('email', $data['email'])->firstOrFail();
+        $user->markEmailAsVerified();
         Sanctum::actingAs($user);
 
         return $user;
@@ -73,10 +83,51 @@ class GuestAccountTest extends ParkingTestCase
         $this->assertSame('Cruz', $visitor->last_name);
         $this->assertSame('09171234567', $visitor->contact_number);
 
-        // Sign in with the registered email and password; the account is a guest.
+        $model = User::findOrFail($user->user_id);
+        Notification::assertSentTo($model, PassEmailVerificationNotification::class);
+        $this->postJson('/api/login', ['identifier' => $data['email'], 'password' => $data['password']])
+            ->assertForbidden()->assertJsonPath('code', 'email_unverified');
+        $this->assertSame(0, $model->tokens()->count());
+        Sanctum::actingAs($model);
+        $this->getJson('/api/guest/profile')->assertForbidden();
+        $url = URL::temporarySignedRoute('verification.verify', now()->addMinutes(60), [
+            'id' => $model->getKey(), 'hash' => sha1($model->getEmailForVerification()),
+        ]);
+        $this->getJson($url)->assertOk()->assertJsonPath('message', 'Email verified successfully. You can now sign in and submit a visitor parking request. A QR pass requires request approval.');
+        $this->assertNotNull($model->fresh()->email_verified_at);
+        $this->assertSame(0, DB::table('qr_passes')->count());
+        // Verification allows login but does not issue a QR pass.
         $login = $this->postJson('/api/login', ['identifier' => $data['email'], 'password' => $data['password']])->assertOk();
         $this->assertSame('guest', $login->json('user.role'));
         $this->assertSame('Ana Maria Cruz', $login->json('user.name'));
+    }
+
+    public function test_existing_guest_can_resend_and_expired_or_tampered_links_do_not_verify(): void
+    {
+        $data = $this->registration();
+        $this->postJson('/api/guest/register', $data)->assertCreated();
+        $user = User::where('email', $data['email'])->firstOrFail();
+        Notification::fake();
+        $this->postJson('/api/email/verification-notification', ['email' => $data['email']])->assertOk();
+        Notification::assertSentTo($user, PassEmailVerificationNotification::class);
+        $parameters = ['id' => $user->getKey(), 'hash' => sha1($user->getEmailForVerification())];
+        $expired = URL::temporarySignedRoute('verification.verify', now()->subMinute(), $parameters);
+        $this->getJson($expired)->assertForbidden();
+        $tampered = URL::temporarySignedRoute('verification.verify', now()->addHour(), $parameters);
+        $this->getJson($tampered . 'x')->assertForbidden();
+        $this->assertNull($user->fresh()->email_verified_at);
+    }
+
+    public function test_mail_failure_preserves_account_and_allows_resend(): void
+    {
+        Notification::shouldReceive('send')->once()->andThrow(new \RuntimeException('Mail unavailable'));
+        $data = $this->registration();
+        $this->postJson('/api/guest/register', $data)->assertCreated()->assertJsonPath('email_verification_sent', false);
+        $user = User::where('email', $data['email'])->firstOrFail();
+        $this->assertNull($user->email_verified_at);
+        Notification::fake();
+        $this->postJson('/api/email/verification-notification', ['email' => $data['email']])->assertOk();
+        Notification::assertSentTo($user, PassEmailVerificationNotification::class);
     }
 
     public function test_registration_validation_and_duplicates(): void

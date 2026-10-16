@@ -35,7 +35,9 @@ class PassEmailVerificationNotification extends Notification
             ->line('Please verify your email address by clicking the button below.')
             ->action('Verify Email Address', $verificationUrl)
             ->line('This verification link will expire in 60 minutes.')
-            ->line('Email verification does not mean your account is approved. Your account remains pending until reviewed by the PASS administrator.')
+            ->line($notifiable->isGuest()
+                ? 'After verifying, sign in to submit a visitor parking request. A QR pass is only issued after that request is approved.'
+                : 'Email verification does not mean your account is approved. Your account remains pending until reviewed by the PASS administrator.')
             ->line('If you did not register for PASS, you may ignore this email.');
     }
 }

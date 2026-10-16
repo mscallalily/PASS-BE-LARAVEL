@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
+use App\Notifications\PassEmailVerificationNotification;
+use Throwable;
 use App\Services\Parking\VisitorPassPolicy;
 use App\Services\Parking\VisitorRequestService;
 use App\Support\CampusTime;
@@ -61,7 +64,7 @@ class GuestAccountController extends Controller
         $email = strtolower(trim($data['email']));
 
         try {
-            DB::transaction(function () use ($data, $first, $last, $email, $roleId) {
+            $userId = DB::transaction(function () use ($data, $first, $last, $email, $roleId) {
                 $userId = DB::table('users')->insertGetId([
                     'user_code' => self::newGuestCode(),
                     'email' => $email,
@@ -85,13 +88,28 @@ class GuestAccountController extends Controller
                     'contact_number' => $data['contact_number'], 'email' => $email, 'is_blacklisted' => false,
                     'created_at' => now(), 'updated_at' => now(),
                 ]);
+
+                return $userId;
             });
         } catch (UniqueConstraintViolationException) {
             // Two submissions at once: the database keeps only one account.
             throw ValidationException::withMessages(['email' => 'An account with this email already exists. Sign in instead.']);
         }
 
-        return response()->json(['message' => 'Guest account created. Sign in to submit a visitor parking request.'], 201);
+        $sent = false;
+        try {
+            User::findOrFail($userId)->notify(new PassEmailVerificationNotification());
+            $sent = true;
+        } catch (Throwable $exception) {
+            report($exception);
+        }
+
+        return response()->json([
+            'message' => $sent
+                ? 'Guest account created. Check your inbox and spam folder to verify your email before signing in.'
+                : 'Guest account created, but the verification email could not be sent. Please resend it before signing in.',
+            'email_verification_sent' => $sent,
+        ], 201);
     }
 
     // ----------------------------------------------------------- profile
@@ -309,6 +327,9 @@ class GuestAccountController extends Controller
     private function guest(Request $request): array
     {
         $user = $request->user();
+        if ($user->isGuest() && !$user->hasVerifiedEmail()) {
+            abort(403, 'Please verify your email address before using your guest account.');
+        }
         $visitor = $user->isGuest() && $user->account_status === 'active'
             ? DB::table('visitors')->where('user_id', $user->user_id)->first()
             : null;

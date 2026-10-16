@@ -421,6 +421,14 @@ $licenseId = DB::table('driver_licenses')->insertGetId([
             ], 401);
         }
 
+        if ($user->isGuest() && !$user->hasVerifiedEmail()) {
+            $this->logAttempt($request, $user, $data['identifier'], false, 'email_unverified');
+            return response()->json([
+                'message' => 'Please verify your email address before signing in. Use Resend verification email on the guest registration page if needed.',
+                'code' => 'email_unverified',
+            ], 403);
+        }
+
         if ($user->account_status !== 'active') {
             $this->logAttempt(
                 $request,
