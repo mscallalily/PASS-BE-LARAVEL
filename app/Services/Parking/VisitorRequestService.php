@@ -28,7 +28,9 @@ class VisitorRequestService
         $paths = [];
         try {
             foreach (['driver_license_photo' => 'driver_license_photo_path', 'vehicle_photo' => 'vehicle_photo_path'] as $input => $column) {
-                $path = $request->file($input)->store('visitor-request-documents', 'private');
+                $file = $request->file($input);
+                // A fresh path for every attempt prevents rollback cleanup from deleting earlier evidence.
+                $path = $file->storeAs('visitor-request-documents', (string) Str::uuid() . '.' . $file->extension(), 'private');
                 if (!$path) throw new \RuntimeException('Unable to store visitor document.');
                 $paths[$column] = $path;
             }

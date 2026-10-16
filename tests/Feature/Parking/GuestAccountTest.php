@@ -119,6 +119,8 @@ class GuestAccountTest extends ParkingTestCase
 
     public function test_photos_are_required_private_and_scoped_to_the_request_owner(): void
     {
+        // Rate limiting has a dedicated test; isolate repeated invalid uploads and account fixtures here.
+        $this->withoutMiddleware(\Illuminate\Routing\Middleware\ThrottleRequests::class);
         $guest = $this->guest();
         $payload = $this->requestData($this->guestVehicle());
         $missing = $payload;
