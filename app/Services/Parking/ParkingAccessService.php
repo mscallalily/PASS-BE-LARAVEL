@@ -53,7 +53,7 @@ class ParkingAccessService
         $at = $context['at'] ?? CarbonImmutable::now();
 
         // Identify outside the transaction: under REPEATABLE READ the first
-        // plain read fixes the snapshot, so the area lock must come first.
+        // plain read fixes the snapshot, so owner and area locks must come first.
         $id = $this->identify($credential);
 
         $reason = $id['error']
@@ -93,8 +93,17 @@ class ParkingAccessService
         $vehicle = $id['vehicle'];
         $areaId = $vehicle->area_id;
 
-        // First statement of the transaction: serializes entries per area,
-        // and every read after it sees the latest committed slot usage.
+        // Serialize this owner's entries across BOTH parking areas before
+        // taking the area lock. Locking reads do not establish an old snapshot.
+        $visitor = $vehicle->owner_visitor_id
+            ? DB::table('visitors')->where('visitor_id', $vehicle->owner_visitor_id)->lockForUpdate()->first()
+            : null;
+        $ownerUserId = $vehicle->owner_user_id ?: ($visitor->user_id ?? null);
+        if ($ownerUserId) {
+            DB::table('users')->where('user_id', $ownerUserId)->lockForUpdate()->first();
+        }
+
+        // Serialize slot allocation within the selected area.
         $area = DB::table('parking_areas')->where('parking_area_id', $areaId)->lockForUpdate()->first();
 
         $active = DB::table('parking_transactions')
@@ -110,6 +119,23 @@ class ParkingAccessService
                 'message' => "{$vehicle->plate_number} is already inside (slot " . ($this->slotCode($active->slot_id) ?? 'none') . ').',
                 'transaction_id' => $active->transaction_id,
             ] + $this->slotInfo($active->slot_id);
+        }
+
+        $otherVehicle = DB::table('parking_transactions as t')
+            ->join('vehicles as v', 'v.vehicle_id', '=', 't.vehicle_id')
+            ->leftJoin('visitors as visitor', 'visitor.visitor_id', '=', 'v.owner_visitor_id')
+            ->where('t.transaction_status', 'active')
+            ->where('t.vehicle_id', '!=', $vehicle->vehicle_id)
+            ->where(function ($query) use ($ownerUserId, $vehicle) {
+                if ($ownerUserId) {
+                    $query->where('v.owner_user_id', $ownerUserId)->orWhere('visitor.user_id', $ownerUserId);
+                } else {
+                    $query->where('v.owner_visitor_id', $vehicle->owner_visitor_id);
+                }
+            })
+            ->lockForUpdate()->first(['t.transaction_id']);
+        if ($otherVehicle) {
+            return $this->deny($id, 'Another vehicle under this account is still inside. Record its exit before entering with a different vehicle.', 'in', $actor, $context, $at);
         }
 
         if ($reason = $this->entryDenialReason($id, $area, $at)) {
