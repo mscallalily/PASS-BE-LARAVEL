@@ -51,6 +51,22 @@ Route::post('/reset-password', [AuthController::class, 'resetPassword'])
 
 // Authenticated routes
 Route::middleware('auth:sanctum')->group(function () {
+    Route::post(
+    '/admin/system-settings/logo',
+    [\App\Http\Controllers\Api\SystemSettingsController::class, 'uploadLogo']
+);
+    
+    // Parking Slot Simulation
+    Route::get(
+        '/admin/parking/slots',
+        [\App\Http\Controllers\Api\ParkingSlotSimulationController::class, 'index']
+    );
+
+    Route::patch(
+        '/admin/parking/slots',
+        [\App\Http\Controllers\Api\ParkingSlotSimulationController::class, 'update']
+    );
+
     Route::get('/admin/system-settings', [
     \App\Http\Controllers\Api\SystemSettingsController::class,
     'index'
