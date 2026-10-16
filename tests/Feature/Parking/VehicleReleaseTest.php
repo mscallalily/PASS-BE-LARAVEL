@@ -28,14 +28,13 @@ class VehicleReleaseTest extends ParkingTestCase
         $stored = DB::table('vehicle_release_requests')->where('release_id', $id)->first();
         $this->assertStringNotContainsString('N01-23-456789', $stored->license_encrypted);
         $this->getJson('/api/vehicle-releases')->assertOk()->assertJsonPath('data.0.license_reference', '•••• 6789');
-        $this->postJson("/api/vehicle-releases/{$id}/action", ['action' => 'approve', 'identity_checked' => true, 'authorization_checked' => true])->assertForbidden();
+        $this->postJson("/api/vehicle-releases/{$id}/action", ['action' => 'release', 'identity_checked' => true, 'authorization_checked' => true])->assertForbidden();
         $staff = $this->actingAsStaff();
         $this->assertSame('denied', $this->gate('exit', ['rfid_tag_uid' => $car['tag']])['status']);
         $this->assertNotNull($this->activeTransaction($car['vehicle_id']));
-        $this->postJson("/api/vehicle-releases/{$id}/action", ['action' => 'approve'])->assertStatus(422);
-        $this->postJson("/api/vehicle-releases/{$id}/action", ['action' => 'approve', 'identity_checked' => true, 'authorization_checked' => true])->assertOk();
         $this->postJson("/api/vehicle-releases/{$id}/action", ['action' => 'release'])->assertStatus(422);
-        $this->postJson("/api/vehicle-releases/{$id}/action", ['action' => 'release', 'identity_checked' => true])->assertOk();
+        $this->postJson("/api/vehicle-releases/{$id}/action", ['action' => 'release', 'identity_checked' => true])->assertStatus(422);
+        $this->postJson("/api/vehicle-releases/{$id}/action", ['action' => 'release', 'identity_checked' => true, 'authorization_checked' => true])->assertOk();
         $this->assertNull($this->activeTransaction($car['vehicle_id']));
         $this->assertDatabaseHas('vehicle_release_requests', ['release_id' => $id, 'status' => 'used', 'released_by' => $staff->user_id]);
         $this->assertNotNull(DB::table('vehicle_release_requests')->where('release_id', $id)->value('exit_event_id'));
@@ -62,24 +61,22 @@ class VehicleReleaseTest extends ParkingTestCase
         $new = $this->postJson('/api/vehicle-releases', $this->payload($car))->assertCreated()->json('release_id');
         $this->travel(121)->minutes();
         $this->actingAsStaff();
-        $this->postJson("/api/vehicle-releases/{$new}/action", ['action' => 'approve', 'identity_checked' => true, 'authorization_checked' => true])->assertStatus(409);
+        $this->postJson("/api/vehicle-releases/{$new}/action", ['action' => 'release', 'identity_checked' => true, 'authorization_checked' => true])->assertStatus(409);
         $this->assertSame('completed', $this->gate('exit', ['rfid_tag_uid' => $car['tag']])['status'], 'Expired request must not trap a normal driver.');
     }
 
-    public function test_owner_unavailable_exception_requires_admin_and_documented_basis(): void
+    public function test_staff_and_admin_cannot_authorize_for_an_unavailable_owner(): void
     {
         $car = $this->parked();
-        $payload = $this->payload($car) + ['exception_reason' => 'Owner could not log in; contacted through registered number and emergency authorization confirmed by campus supervisor.'];
-        $this->postJson('/api/vehicle-releases', $payload)->assertForbidden();
+        $this->postJson('/api/vehicle-releases', $this->payload($car))->assertForbidden();
         $this->actingAsAdmin();
         $this->postJson('/api/vehicle-releases', $this->payload($car))->assertForbidden();
-        $id = $this->postJson('/api/vehicle-releases', $payload)->assertCreated()->json('release_id');
-        $this->actingAsStaff();
-        $this->postJson("/api/vehicle-releases/{$id}/action", ['action' => 'approve', 'identity_checked' => true, 'authorization_checked' => true])->assertForbidden();
+        $this->postJson('/api/vehicle-releases', $this->payload($car) + ['exception_reason' => 'Owner unavailable; administrator attempts override.'])->assertStatus(422);
+        Sanctum::actingAs($car['user']);
+        $id = $this->postJson('/api/vehicle-releases', $this->payload($car))->assertCreated()->json('release_id');
         $this->actingAsAdmin();
-        $this->postJson("/api/vehicle-releases/{$id}/action", ['action' => 'approve', 'identity_checked' => true, 'authorization_checked' => true])->assertOk();
-        $this->actingAsStaff();
-        $this->postJson("/api/vehicle-releases/{$id}/action", ['action' => 'release', 'identity_checked' => true])->assertOk();
-        $this->assertDatabaseHas('audit_logs', ['auditable_type' => 'vehicle_release_requests', 'auditable_id' => $id, 'action' => 'vehicle_release_admin_exception_requested']);
+        $this->postJson("/api/vehicle-releases/{$id}/action", ['action' => 'approve'])->assertStatus(422);
+        $this->postJson("/api/vehicle-releases/{$id}/action", ['action' => 'release', 'identity_checked' => true])->assertStatus(422);
+        $this->assertNotNull($this->activeTransaction($car['vehicle_id']));
     }
 }

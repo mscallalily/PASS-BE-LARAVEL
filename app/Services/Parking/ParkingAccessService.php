@@ -231,7 +231,7 @@ class ParkingAccessService
             $release = DB::table('vehicle_release_requests')->where('transaction_id', $transaction->transaction_id)
                 ->whereIn('status', ['pending', 'approved'])->where('expires_at', '>', $at)
                 ->lockForUpdate()->first();
-            if ($release && ((int) ($context['emergency_release_id'] ?? 0) !== (int) $release->release_id || $release->status !== 'approved')) {
+            if ($release && ((int) ($context['emergency_release_id'] ?? 0) !== (int) $release->release_id || $release->status !== 'pending' || $release->exception_reason || (int) $release->requested_by !== (int) $release->owner_user_id)) {
                 return $this->deny($id, 'An emergency driver release is pending for this session. Complete the Emergency Vehicle Release process or cancel it before a regular exit.', 'out', $actor, $context, $at);
             }
 
