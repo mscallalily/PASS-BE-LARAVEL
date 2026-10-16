@@ -52,18 +52,61 @@ class GuestAccountTest extends ParkingTestCase
         ])->assertCreated()->json('vehicle_id');
     }
 
-    private function requestToday(int $vehicleId, int $hours = 4): int
+    private function requestData(int $vehicleId, int $hours = 4): array
     {
-        $now = CampusTime::now();
-
-        return $this->postJson('/api/guest/requests', [
+        return [
             'vehicle_id' => $vehicleId,
-            'visit_date' => $now->toDateString(),
-            'arrival_time' => $now->subMinutes(30)->format('H:i') < $now->format('H:i') ? $now->subMinutes(30)->format('H:i') : '00:00',
-            'departure_time' => $now->addHours($hours)->format('H:i') > $now->format('H:i') ? $now->addHours($hours)->format('H:i') : '23:59',
-            'purpose' => 'Meeting',
-            'visiting' => 'Registrar',
-        ])->assertCreated()->json('request_id');
+            'visit_date' => CampusTime::now()->addDay()->toDateString(),
+            'arrival_time' => '10:00',
+            'departure_time' => sprintf('%02d:00', 10 + $hours),
+            'purpose' => 'Meeting', 'visiting' => 'Registrar',
+            'driver_is_requester' => true,
+            'driver_license_number' => 'N01-23-456789',
+            'driver_license_expiry' => '2035-12-31',
+            'passenger_count' => 2,
+        ];
+    }
+
+    private function requestFuture(int $vehicleId, int $hours = 4): int
+    {
+        return $this->postJson('/api/guest/requests', $this->requestData($vehicleId, $hours))->assertCreated()->json('request_id');
+    }
+
+    public function test_same_day_past_dates_and_invalid_driver_details_are_rejected(): void
+    {
+        $this->guest();
+        $vehicle = $this->guestVehicle();
+        $payload = $this->requestData($vehicle);
+        $this->postJson('/api/guest/requests', array_replace($payload, ['visit_date' => CampusTime::date()]))->assertUnprocessable()->assertJsonValidationErrors('visit_date');
+        $this->postJson('/api/guest/requests', array_replace($payload, ['visit_date' => CampusTime::now()->subDay()->toDateString()]))->assertUnprocessable()->assertJsonValidationErrors('visit_date');
+        $this->postJson('/api/guest/requests', array_replace($payload, ['departure_time' => '09:00']))->assertUnprocessable()->assertJsonValidationErrors('departure_time');
+        $this->postJson('/api/guest/requests', array_replace($payload, ['driver_is_requester' => false, 'driver_name' => '']))->assertUnprocessable()->assertJsonValidationErrors('driver_name');
+        $this->postJson('/api/guest/requests', array_replace($payload, ['driver_license_expiry' => CampusTime::now()->subDay()->toDateString()]))->assertUnprocessable()->assertJsonValidationErrors('driver_license_expiry');
+        $this->postJson('/api/guest/requests', array_replace($payload, ['passenger_count' => -1]))->assertUnprocessable()->assertJsonValidationErrors('passenger_count');
+        $this->assertSame(0, DB::table('visitor_requests')->count());
+    }
+
+    public function test_separate_driver_is_saved_encrypted_and_visible_as_declared_details_to_admin(): void
+    {
+        $this->guest();
+        $payload = array_replace($this->requestData($this->guestVehicle()), ['driver_is_requester' => false, 'driver_name' => 'Juan Santos', 'passenger_count' => 3]);
+        $id = $this->postJson('/api/guest/requests', $payload)->assertCreated()->json('request_id');
+        $stored = DB::table('visitor_requests')->where('request_id', $id)->first();
+        $this->assertNotSame($payload['driver_license_number'], $stored->driver_license_encrypted);
+        $this->getJson('/api/guest/requests')->assertOk()->assertJsonPath('data.0.driver.name', 'Juan Santos')->assertJsonPath('data.0.driver.license_reference', '•••• 6789')->assertJsonPath('data.0.driver.passenger_count', 3)->assertJsonPath('data.0.driver.identity_verified', false);
+        $this->actingAsAdmin();
+        $this->getJson('/api/visitors/requests')->assertOk()->assertJsonPath('data.0.driver.name', 'Juan Santos');
+    }
+
+    public function test_tomorrow_means_next_manila_calendar_day_even_near_midnight(): void
+    {
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-10-16 23:55:00', 'Asia/Manila'));
+        $this->guest();
+        $payload = $this->requestData($this->guestVehicle());
+        $payload['arrival_time'] = '00:10';
+        $payload['departure_time'] = '01:00';
+        $this->postJson('/api/guest/requests', $payload)->assertCreated();
+        $this->getJson('/api/guest/requests')->assertJsonPath('data.0.driver.name', 'Ana Maria Cruz');
     }
 
     public function test_registration_creates_account_role_profile_and_linked_visitor(): void
@@ -187,13 +230,13 @@ class GuestAccountTest extends ParkingTestCase
     {
         $this->guest();
         $otherVehicle = $this->guestVehicle();
-        $otherRequest = $this->requestToday($otherVehicle);
+        $otherRequest = $this->requestFuture($otherVehicle);
 
         $this->guest();
         $this->assertSame([], $this->getJson('/api/guest/vehicles')->json('data'));
         $this->assertSame([], $this->getJson('/api/guest/requests')->json('data'));
         $this->postJson('/api/guest/requests', [
-            'vehicle_id' => $otherVehicle, 'visit_date' => CampusTime::date(), 'arrival_time' => '00:00', 'departure_time' => '23:59', 'purpose' => 'x', 'visiting' => 'y',
+            ...$this->requestData($otherVehicle),
         ])->assertUnprocessable()->assertJsonValidationErrors('vehicle_id');
         $this->postJson("/api/guest/requests/{$otherRequest}/cancel")->assertNotFound();
     }
@@ -204,7 +247,7 @@ class GuestAccountTest extends ParkingTestCase
         $this->guest();
         $vehicle = $this->guestVehicle();
 
-        $id = $this->requestToday($vehicle);
+        $id = $this->requestFuture($vehicle);
 
         $this->assertSame('pending', DB::table('visitor_requests')->where('request_id', $id)->value('request_status'));
         $this->assertFalse(DB::table('qr_passes')->where('request_id', $id)->exists());
@@ -217,7 +260,7 @@ class GuestAccountTest extends ParkingTestCase
     {
         $guest = $this->guest();
         $vehicle = $this->guestVehicle();
-        $id = $this->requestToday($vehicle);
+        $id = $this->requestFuture($vehicle);
 
         $this->actingAsStaff();
         $this->postJson("/api/visitors/requests/{$id}/approve")->assertForbidden();
@@ -225,6 +268,13 @@ class GuestAccountTest extends ParkingTestCase
         $this->actingAsAdmin();
         $this->postJson("/api/visitors/requests/{$id}/approve")->assertOk();
 
+        Sanctum::actingAs($guest);
+        $this->assertSame('scheduled', $this->getJson('/api/guest/passes')->json('data.0.status'));
+        $scheduledCode = $this->getJson('/api/guest/passes')->json('data.0.pass_code');
+        $this->actingAsStaff();
+        $this->assertSame('denied', $this->gate('entry', ['qr_pass_code' => $scheduledCode])['status']);
+        // Scheduled passes become active on the requested visit date.
+        $this->travelTo(CampusTime::now()->addDay()->startOfDay()->setHour(10)->addMinute());
         // The guest is notified and sees one active pass linked to the request.
         Sanctum::actingAs($guest);
         $this->assertTrue(DB::table('notifications')->where('user_id', $guest->user_id)->where('notification_type', 'visitor_request_approved')->exists());
@@ -253,7 +303,7 @@ class GuestAccountTest extends ParkingTestCase
     public function test_admin_rejection_notifies_guest_and_issues_no_pass(): void
     {
         $guest = $this->guest();
-        $id = $this->requestToday($this->guestVehicle());
+        $id = $this->requestFuture($this->guestVehicle());
 
         $this->actingAsAdmin();
         $this->postJson("/api/visitors/requests/{$id}/reject", ['remarks' => 'Office closed that day'])->assertOk();
@@ -269,14 +319,14 @@ class GuestAccountTest extends ParkingTestCase
     public function test_request_whose_visit_has_ended_cannot_be_approved_and_expired_pass_is_denied(): void
     {
         $this->guest();
-        $late = $this->requestToday($this->guestVehicle(), 1);
+        $late = $this->requestFuture($this->guestVehicle(), 1);
         $vehicle2 = $this->guestVehicle();
-        $approved = $this->requestToday($vehicle2, 1);
+        $approved = $this->requestFuture($vehicle2, 1);
 
         $this->actingAsAdmin();
         $pass = $this->postJson("/api/visitors/requests/{$approved}/approve")->assertOk()->json('pass');
 
-        $this->travel(26)->hours();
+        $this->travel(2)->days();
         $this->postJson("/api/visitors/requests/{$late}/approve")->assertStatus(409);
         $r = $this->gate('entry', ['qr_pass_code' => $pass['pass_code']]);
         $this->assertSame('denied', $r['status']);
@@ -286,7 +336,7 @@ class GuestAccountTest extends ParkingTestCase
     public function test_guest_can_update_profile_and_cancel_a_pending_request(): void
     {
         $guest = $this->guest();
-        $id = $this->requestToday($this->guestVehicle());
+        $id = $this->requestFuture($this->guestVehicle());
 
         $this->patchJson('/api/guest/profile', ['full_name' => 'Ana Reyes', 'contact_number' => '09998887777', 'affiliation' => 'ACME'])->assertOk();
         $this->assertSame('Reyes', DB::table('visitors')->where('user_id', $guest->user_id)->value('last_name'));

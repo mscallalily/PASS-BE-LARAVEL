@@ -92,7 +92,7 @@ class VisitorAccessController extends Controller
             ->orderByDesc('r.request_id')
             ->limit(300)
             ->get([
-                'r.request_id', 'r.request_status', 'r.purpose', 'r.requested_valid_from', 'r.requested_valid_until', 'r.reviewed_at', 'r.review_remarks', 'r.created_at',
+                'r.driver_name', 'r.driver_is_requester', 'r.driver_license_encrypted', 'r.driver_license_expiry', 'r.passenger_count', 'r.request_id', 'r.request_status', 'r.purpose', 'r.requested_valid_from', 'r.requested_valid_until', 'r.reviewed_at', 'r.review_remarks', 'r.created_at',
                 'vis.visitor_id', 'vis.user_id as visitor_user_id', DB::raw("CONCAT_WS(' ', vis.first_name, vis.last_name) as visitor_name"), 'vis.contact_number', 'vis.affiliation', 'vis.is_blacklisted',
                 'v.vehicle_id', 'v.plate_number', 'vt.type_name as vehicle_type', 'a.area_name', 'rev.user_code as reviewed_by',
             ])
@@ -103,6 +103,7 @@ class VisitorAccessController extends Controller
                     'request_id' => $r->request_id,
                     'request_status' => $r->request_status,
                     'purpose' => $r->purpose,
+                    'driver' => VisitorRequestService::driverSummary($r),
                     'valid_from' => ParkingOperationsController::iso($r->requested_valid_from),
                     'valid_until' => ParkingOperationsController::iso($r->requested_valid_until),
                     'window_ended' => $r->requested_valid_until < $now->toDateTimeString(),

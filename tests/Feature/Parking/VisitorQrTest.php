@@ -10,7 +10,7 @@ class VisitorQrTest extends ParkingTestCase
 {
     private function requestPayload(array $overrides = []): array
     {
-        $now = CampusTime::now();
+        $now = CampusTime::now()->addDay()->startOfDay()->setHour(10);
 
         return $overrides + [
             'first_name' => 'Rhea',
@@ -20,7 +20,7 @@ class VisitorQrTest extends ParkingTestCase
             'vehicle_type_id' => DB::table('vehicle_types')->where('type_code', 'sedan')->value('vehicle_type_id'),
             'purpose' => 'Enrollment inquiry',
             'visiting' => 'Registrar',
-            'valid_from' => $now->subMinutes(30)->format('Y-m-d\TH:i'),
+            'valid_from' => $now->format('Y-m-d\TH:i'),
             'valid_until' => $now->addHours(4)->format('Y-m-d\TH:i'),
         ];
     }
@@ -29,7 +29,10 @@ class VisitorQrTest extends ParkingTestCase
     {
         $id = $this->postJson('/api/visitors/requests', $this->requestPayload($overrides))->assertCreated()->json('request_id');
 
-        return $this->postJson("/api/visitors/requests/{$id}/approve")->assertOk()->json('pass') + ['request_id' => $id];
+        $pass = $this->postJson("/api/visitors/requests/{$id}/approve")->assertOk()->json('pass') + ['request_id' => $id];
+        $from = DB::table('qr_passes')->where('qr_pass_id', $pass['qr_pass_id'])->value('valid_from');
+        $this->travelTo(\Carbon\CarbonImmutable::parse($from, config('app.timezone'))->addMinute());
+        return $pass;
     }
 
     public function test_approving_a_request_issues_one_pass_linked_to_request_visitor_and_vehicle(): void
@@ -173,6 +176,15 @@ class VisitorQrTest extends ParkingTestCase
         $this->postJson("/api/visitors/requests/{$id}/reject", ['remarks' => 'x'])->assertForbidden();
         $this->assertSame('pending', DB::table('visitor_requests')->where('request_id', $id)->value('request_status'));
         $this->assertFalse(DB::table('qr_passes')->where('request_id', $id)->exists());
+    }
+
+    public function test_staff_desk_cannot_create_same_day_requests(): void
+    {
+        $this->actingAsAdmin();
+        $this->postJson('/api/visitors/requests', $this->requestPayload([
+            'valid_from' => CampusTime::now()->startOfDay()->format('Y-m-d\TH:i'),
+            'valid_until' => CampusTime::now()->endOfDay()->format('Y-m-d\TH:i'),
+        ]))->assertUnprocessable()->assertJsonValidationErrors('valid_from');
     }
 
     public function test_regular_users_cannot_manage_visitors(): void

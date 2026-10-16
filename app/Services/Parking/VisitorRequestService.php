@@ -25,6 +25,9 @@ class VisitorRequestService
     /** File a pending request for a visitor's registered vehicle and notify Admins. */
     public function create(int $visitorId, int $vehicleId, string $purpose, string $visiting, CarbonImmutable $from, CarbonImmutable $until, User $actor, string $source): int
     {
+        if (CampusTime::date($from) <= CampusTime::date()) {
+            throw ValidationException::withMessages(['valid_from' => 'Same-day requests are not allowed. Choose tomorrow or a later date (Manila time).']);
+        }
         if ($until <= $from) {
             throw ValidationException::withMessages(['valid_until' => 'The visit must end after it starts.']);
         }
@@ -157,6 +160,22 @@ class VisitorRequestService
 
         DB::table('visitor_requests')->where('request_id', $requestId)->update(['request_status' => 'cancelled', 'updated_at' => now()]);
         $this->audit($guest, $requestId, 'visitor_request_cancelled', ['request_status' => 'pending'], ['request_status' => 'cancelled']);
+    }
+
+    /** Identity is declared by the requester; staff must inspect the physical license at the gate. */
+    public static function driverSummary(object $request): ?array
+    {
+        if (empty($request->driver_name)) return null;
+        $license = !empty($request->driver_license_encrypted)
+            ? \Illuminate\Support\Facades\Crypt::decryptString($request->driver_license_encrypted) : '';
+        return [
+            'name' => $request->driver_name,
+            'is_requester' => (bool) $request->driver_is_requester,
+            'license_reference' => $license ? '•••• ' . substr($license, -4) : null,
+            'license_expiry' => $request->driver_license_expiry,
+            'passenger_count' => $request->passenger_count,
+            'identity_verified' => false,
+        ];
     }
 
     private function lockPending(int $requestId): object

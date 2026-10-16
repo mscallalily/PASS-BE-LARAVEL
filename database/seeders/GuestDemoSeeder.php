@@ -85,7 +85,7 @@ class GuestDemoSeeder extends Seeder
                 return;
             }
 
-            $from = CampusTime::now()->startOfHour();
+            $from = CampusTime::now()->addDay()->startOfDay()->setHour(9);
             $requestId = app(VisitorRequestService::class)->create(
                 (int) $visitorId, $vehicleId, 'Campus visit (demo request)', 'Admissions Office', $from, $from->addHours(8), $user, 'demo_seeder'
             );

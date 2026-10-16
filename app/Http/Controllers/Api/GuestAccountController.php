@@ -205,7 +205,7 @@ class GuestAccountController extends Controller
             ->leftJoin('parking_areas as a', 'a.parking_area_id', '=', 'r.destination_area_id')
             ->where('r.visitor_id', $visitor->visitor_id)
             ->orderByDesc('r.request_id')
-            ->get(['r.request_id', 'r.request_status', 'r.purpose', 'r.requested_valid_from', 'r.requested_valid_until', 'r.reviewed_at', 'r.review_remarks', 'r.created_at', 'v.plate_number', 'vt.type_name', 'a.area_name'])
+            ->get(['r.driver_name', 'r.driver_is_requester', 'r.driver_license_encrypted', 'r.driver_license_expiry', 'r.passenger_count', 'r.request_id', 'r.request_status', 'r.purpose', 'r.requested_valid_from', 'r.requested_valid_until', 'r.reviewed_at', 'r.review_remarks', 'r.created_at', 'v.plate_number', 'vt.type_name', 'a.area_name'])
             ->map(function ($r) use ($now) {
                 $pass = DB::table('qr_passes')->where('request_id', $r->request_id)->orderByDesc('qr_pass_id')->first();
 
@@ -213,6 +213,7 @@ class GuestAccountController extends Controller
                     'request_id' => $r->request_id,
                     'request_status' => $r->request_status,
                     'purpose' => $r->purpose,
+                    'driver' => \App\Services\Parking\VisitorRequestService::driverSummary($r),
                     'valid_from' => ParkingOperationsController::iso($r->requested_valid_from),
                     'valid_until' => ParkingOperationsController::iso($r->requested_valid_until),
                     'window_ended' => $r->requested_valid_until < $now->toDateTimeString(),
@@ -240,22 +241,41 @@ class GuestAccountController extends Controller
             'departure_time' => ['required', 'date_format:H:i'],
             'purpose' => ['required', 'string', 'max:150'],
             'visiting' => ['required', 'string', 'max:90'],
+            'driver_is_requester' => ['required', 'boolean'],
+            'driver_name' => ['required_if:driver_is_requester,false', 'nullable', 'string', 'max:200', 'regex:/^\S+(\s+\S+)+$/u'],
+            'driver_license_number' => ['required', 'string', 'min:6', 'max:30', 'regex:/^[A-Za-z0-9 -]+$/'],
+            'driver_license_expiry' => ['required', 'date_format:Y-m-d', 'after_or_equal:visit_date'],
+            'passenger_count' => ['required', 'integer', 'min:0', 'max:99'],
         ], [], ['visiting' => 'person or office to visit']);
 
         // Visit date and times are campus (Asia/Manila) local times.
-        $from = CarbonImmutable::createFromFormat('Y-m-d H:i', "{$data['visit_date']} {$data['arrival_time']}", CampusTime::zone());
-        $until = CarbonImmutable::createFromFormat('Y-m-d H:i', "{$data['visit_date']} {$data['departure_time']}", CampusTime::zone());
+        $from = CarbonImmutable::createFromFormat('!Y-m-d H:i', "{$data['visit_date']} {$data['arrival_time']}", CampusTime::zone());
+        $until = CarbonImmutable::createFromFormat('!Y-m-d H:i', "{$data['visit_date']} {$data['departure_time']}", CampusTime::zone());
 
-        if ($data['visit_date'] < CampusTime::date()) {
-            throw ValidationException::withMessages(['visit_date' => 'Choose today or a future date.']);
+        if ($data['visit_date'] <= CampusTime::date()) {
+            throw ValidationException::withMessages(['visit_date' => 'Same-day requests are not allowed. Choose tomorrow or a later date (Manila time).']);
+        }
+        if ($from <= CampusTime::now()) {
+            throw ValidationException::withMessages(['arrival_time' => 'Choose a future arrival time in Manila time. Past or current-minute arrivals cannot be submitted online.']);
         }
         if ($until <= $from) {
             throw ValidationException::withMessages(['departure_time' => 'Departure must be after arrival.']);
         }
 
-        $requestId = DB::transaction(fn () => $this->requests->create(
-            $visitor->visitor_id, (int) $data['vehicle_id'], $data['purpose'], $data['visiting'], $from, $until, $user, 'guest_account'
-        ));
+        $requestId = DB::transaction(function () use ($visitor, $user, $data, $from, $until, $request) {
+            $id = $this->requests->create(
+                $visitor->visitor_id, (int) $data['vehicle_id'], $data['purpose'], $data['visiting'], $from, $until, $user, 'guest_account'
+            );
+            DB::table('visitor_requests')->where('request_id', $id)->update([
+                'driver_is_requester' => $request->boolean('driver_is_requester'),
+                'driver_name' => $request->boolean('driver_is_requester')
+                    ? trim($visitor->first_name . ' ' . $visitor->last_name) : trim($data['driver_name']),
+                'driver_license_encrypted' => \Illuminate\Support\Facades\Crypt::encryptString(strtoupper(trim($data['driver_license_number']))),
+                'driver_license_expiry' => $data['driver_license_expiry'],
+                'passenger_count' => (int) $data['passenger_count'],
+            ]);
+            return $id;
+        });
 
         return response()->json(['message' => 'Your visitor parking request was submitted and is pending Admin approval.', 'request_id' => $requestId], 201);
     }

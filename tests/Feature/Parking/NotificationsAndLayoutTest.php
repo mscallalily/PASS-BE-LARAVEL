@@ -86,10 +86,11 @@ class NotificationsAndLayoutTest extends ParkingTestCase
             'password' => 'RevokeGuest2026', 'password_confirmation' => 'RevokeGuest2026', 'agree' => true,
         ])->assertCreated();
         $guest = User::where('email', 'revoke.guest@example.com')->first();
+        $guest->markEmailAsVerified();
         Sanctum::actingAs($guest);
         $vehicle = $this->postJson('/api/guest/vehicles', ['plate_number' => 'RVK 1001', 'vehicle_type_id' => DB::table('vehicle_types')->where('type_code', 'sedan')->value('vehicle_type_id')])->json('vehicle_id');
         $now = CampusTime::now();
-        $id = $this->postJson('/api/guest/requests', ['vehicle_id' => $vehicle, 'visit_date' => $now->toDateString(), 'arrival_time' => '00:00', 'departure_time' => '23:59', 'purpose' => 'x', 'visiting' => 'y'])->json('request_id');
+        $id = $this->postJson('/api/guest/requests', ['vehicle_id' => $vehicle, 'visit_date' => $now->addDay()->toDateString(), 'arrival_time' => '00:00', 'departure_time' => '23:59', 'purpose' => 'x', 'visiting' => 'y', 'driver_is_requester' => true, 'driver_license_number' => 'N01-23-456789', 'driver_license_expiry' => '2035-12-31', 'passenger_count' => 0])->json('request_id');
 
         $this->actingAsAdmin();
         $pass = $this->postJson("/api/visitors/requests/{$id}/approve")->json('pass');
