@@ -1,4 +1,6 @@
-# Parking fit proposal — 17 October 2026
+# Complete slot map and measured proposal — 17 October 2026
+
+The default Slot map now shows every C-01–C-55 and M-01–M-84 record. Car symbols are schematic, not physical bay dimensions. Measured proposal is a separate view retaining the earlier metre-sized 30-car arrangement. Both Plan and 3D use the selected view and the same live slot IDs/status.
 
 This supersedes the earlier cumulative-ruler dimension interpretation. It is a metric prototype proposal, not a surveyed campus plan or an approved physical capacity.
 
@@ -8,7 +10,7 @@ Owner-reported motorcycle parcel: **30.96 × 8.80 m**, excluding the **3.06 m** 
 
 Car perimeter lengths, in supplied order: **18.42, 12.04, 2.60, 20.18, 33.37, 3.00, 3.36, 49.26 m**. The proposed mapping begins at the right edge and continues around the notch, returning along the long top edge. Bearings are estimated from the image with a closed polygon constrained to those lengths. The numbers alone do not determine the actual shape or area. Campus confirmation is required.
 
-All bay and boundary geometry uses **8 drawing units per metre**. `ParkingMapLayout::SCALE` is separately the integer database precision factor, not a metre conversion.
+In Measured proposal, bay and boundary geometry uses **8 drawing units per metre**. In the complete Slot map, car symbols and aisles are dimensionless diagram shapes. `ParkingMapLayout::SCALE` is separately the integer database precision factor, not a metre conversion.
 
 ## Motorcycle arrangement
 
@@ -21,13 +23,17 @@ All bay and boundary geometry uses **8 drawing units per metre**. `ParkingMapLay
 
 The 1 × 2 m bay reference is North Tyneside Council, *Transport and Highways SPD 2022*, Appendix E. It is not asserted as a Philippine minimum. The earlier 1.30 × 2.80 m template cannot fit 84 bays in this parcel even before aisles: bay rectangles alone need 305.76 m², versus 272.448 m² available.
 
-## Car arrangement and unresolved capacity
+## Measured car arrangement and unresolved physical capacity
 
-The proposal draws **30 car bays**: 29 at **2.50 × 5.00 m**, plus the existing C-42 accessible designation at **4.00 × 5.00 m**. A 6.00 m reversing aisle and a 1.20 m front walkway at C-42 are drawn. The concave notch remains clear.
+The separate Measured proposal draws **30 car bays**: 29 at **2.50 × 5.00 m**, plus the existing C-42 accessible designation at **4.00 × 5.00 m**. A 6.00 m reversing aisle and a 1.20 m front walkway at C-42 are drawn. The concave notch remains clear.
 
 This is one conservative arrangement, **not a proven maximum**. Fitting 55 cars has not been demonstrated. The accessible count, continuous pedestrian route, entrances, swept paths and actual boundaries still need campus review. A single retained accessible designation does not establish compliance with the 2024 BP 344 IRR requirements.
 
-All **139 database inventory records** remain: 84 motorcycle, 55 car. The 25 car records without proposed positions are retained with null coordinates. Historical transactions, slot status, IDs and gate state remain intact. Current assignment/capacity rules are not changed by this drawing update; this proposal must not be used as approval to admit 55 cars physically.
+All **139 database inventory records** remain: 84 motorcycle, 55 car. The default Slot map now gives all 55 car records diagram coordinates. In Measured proposal only, 25 car codes have no physical proposal position and are omitted from the drawing; their live data and inventory records remain intact. Switching views never creates or deletes inventory or parking sessions. Historical transactions, slot status, IDs and gate state remain intact. Current assignment/capacity rules are not changed by this drawing update; this proposal must not be used as approval to admit 55 cars physically.
+
+## Complete slot diagram
+
+The default car diagram uses three rows with 19, 19 and 17 individual symbols, for 55 total. C-42 retains its existing accessible designation. Symbol rectangles are kept inside the parcel and separate from each other and the displayed diagram aisles. Their smaller diagram dimensions must not be interpreted as approved car bay dimensions. The Measured proposal view preserves the nominal 2.50 × 5.00 m car template, the 6.00 m aisle and all original boundary inputs.
 
 ## Apply locally
 
@@ -39,7 +45,7 @@ php artisan parking:refresh-layout
 php artisan test --filter="ParkingMeasurementLayoutTest|AvailabilityMapTest"
 ```
 
-Use `parking:refresh-layout` for this update rather than reseeding operating data. No schema migration is needed. In the frontend, run `npm run build`, then open `/app/parking/layout` or `/guest-dashboard/parking` and compare Plan/3D, area focus and Measurements & design basis.
+Use `parking:refresh-layout` for this update rather than reseeding operating data. No schema migration is needed. In the frontend, run `npm run build`, then open `/app/parking/layout` or `/guest-dashboard/parking`. Slot map · 55 cars is selected by default. Compare Plan/3D, select C-55, then switch to Measured proposal to inspect the separate physical arrangement.
 
 ## Verification scope
 
@@ -47,4 +53,4 @@ Geometry tests check reported lengths, bay dimensions, all drawn bays inside the
 
 Sources are linked in the application's measurement panel: Philippine NBCP IRR (Pasig government reproduction), North Tyneside transport SPD and NCDA revised 2024 BP 344 IRR.
 
-Validated locally: full backend suite 121 passed (18,743 assertions); targeted layout/privacy 5 passed (17,767 assertions); TypeScript and production build passed. Real-API WebGL/browser checks: 269 across four roles and 320/390/768/1440 px, followed by 42 focused checks after label placement refinement, both with zero page errors.
+Regression coverage includes all 55 car codes appearing exactly once, symbols inside the parcel without overlapping each other or the diagram aisles, C-55 entry/refresh/exit visibility, identical live IDs/status between layout views, and server-side user/guest redaction. The retained measured view has separate metre-sized geometry checks.

@@ -120,10 +120,9 @@ class ParkingOperationsController extends Controller
     }
 
     /**
-     * The interactive DYCI parking map: the static site drawing, every painted
-     * bay, and the live state of every slot (same rows as the slots endpoint).
-     * Slot positions come from parking_slots; slots not printed on the
-     * reference drawing are returned with placed = false.
+     * Complete live slot diagram. Refreshed parking_slots coordinates place
+     * every configured code; measured_layout is a separate static alternative.
+     * Both views use the same live slot records and never change capacity.
      */
     public function map(Request $request): JsonResponse
     {
@@ -145,6 +144,7 @@ class ParkingOperationsController extends Controller
         return response()->json([
             'view_box' => ParkingMapLayout::VIEW_BOX,
             'geometry' => ParkingMapLayout::geometry(),
+            'measured_layout' => ParkingMapLayout::measuredLayout(),
             'gate' => DB::table('access_gates')->where('gate_code', 'MAIN-GATE')->first(['gate_id', 'gate_code', 'gate_name', 'gate_status']),
             'slots' => $slots->map(fn ($s) => $s + [
                 'placed' => $s['pos_x'] !== null,
@@ -192,6 +192,7 @@ class ParkingOperationsController extends Controller
 
         return response()->json([
             'view_box' => ParkingMapLayout::VIEW_BOX, 'geometry' => ParkingMapLayout::geometry(),
+            'measured_layout' => ParkingMapLayout::measuredLayout(),
             'extra_bays' => array_values(array_filter(ParkingMapLayout::bays(), fn ($b) => $b['slot_number'] === null)),
             'slots' => $slots, 'areas' => array_values($areas), 'overall' => ParkingStats::overall($areas),
             'generated_at' => now()->toIso8601String(),

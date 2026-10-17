@@ -10,7 +10,7 @@ class ParkingMeasurementLayoutTest extends ParkingTestCase
 {
     public function test_metric_parcels_retain_owner_dimensions_and_proposal_limits(): void
     {
-        $g = ParkingMapLayout::geometry();
+        $g = ParkingMapLayout::geometry(true);
         $unit = $g['measurement_basis']['units_per_metre'];
         $mc = $g['areas'][0]['polygon'];
         $this->assertEqualsWithDelta(30.96, $this->distance($mc[0], $mc[1]) / $unit, 0.00001);
@@ -24,7 +24,7 @@ class ParkingMeasurementLayoutTest extends ParkingTestCase
         foreach ([18.42, 12.04, 2.60, 20.18, 33.37, 3.00, 3.36, 49.26] as $i => $length) {
             $this->assertEqualsWithDelta($length, $this->distance($car[$i], $car[($i + 1) % 8]) / $unit, 0.00001);
         }
-        $this->assertCount(114, ParkingMapLayout::slotPositions());
+        $this->assertCount(114, ParkingMapLayout::slotPositions(true));
         $this->assertSame(['motorcycle_configured' => 84, 'motorcycle_drawn' => 84, 'car_configured' => 55, 'car_drawn' => 30], $g['measurement_basis']['inventory']);
         $this->assertFalse($g['measurement_basis']['survey_verified']);
         $this->assertStringContainsString('not the maximum', $g['measurement_basis']['car_proposal']);
@@ -35,8 +35,8 @@ class ParkingMeasurementLayoutTest extends ParkingTestCase
 
     public function test_bays_are_inside_parcels_without_overlapping_other_bays_aisles_or_the_road(): void
     {
-        $g = ParkingMapLayout::geometry();
-        $positions = ParkingMapLayout::slotPositions();
+        $g = ParkingMapLayout::geometry(true);
+        $positions = ParkingMapLayout::slotPositions(true);
         $this->assertCount(84, array_filter($positions, fn ($b) => $b['area'] === 'MC'));
         $this->assertCount(30, array_filter($positions, fn ($b) => $b['area'] === 'CAR'));
         foreach (range(1, 84) as $i) {
@@ -62,6 +62,35 @@ class ParkingMeasurementLayoutTest extends ParkingTestCase
             }
             foreach ($polygons as $otherCode => $other) {
                 $this->assertFalse($this->overlap($poly, $other), "$code overlaps $otherCode");
+            }
+            $polygons[$code] = $poly;
+        }
+    }
+
+    public function test_complete_slot_diagram_places_all_55_car_codes_once_with_clear_symbols(): void
+    {
+        $positions = ParkingMapLayout::slotPositions();
+        $g = ParkingMapLayout::geometry();
+        $this->assertCount(139, $positions);
+        $this->assertSame('slot_diagram', $g['measurement_basis']['scale']);
+        $this->assertSame(55, $g['measurement_basis']['inventory']['car_drawn']);
+        $this->assertSame('metric_proposal', ParkingMapLayout::measuredLayout()['geometry']['measurement_basis']['scale']);
+        $polygons = [];
+        foreach (range(1, 55) as $number) {
+            $code = sprintf('C-%02d', $number);
+            $this->assertArrayHasKey($code, $positions);
+            $bay = $positions[$code];
+            $this->assertSame($number, $bay['slot_number']);
+            $this->assertSame('diagram', $bay['placement_basis']);
+            $poly = $this->corners($bay);
+            foreach ($poly as $p) {
+                $this->assertTrue($this->inside($p, $g['areas'][1]['polygon']), "$code symbol outside the car parcel");
+            }
+            foreach ($g['circulation'] as $clearance) {
+                $this->assertFalse($this->overlap($poly, $clearance['polygon']), "$code symbol overlaps a displayed aisle");
+            }
+            foreach ($polygons as $other) {
+                $this->assertFalse($this->overlap($poly, $other), "$code symbol overlaps another symbol");
             }
             $polygons[$code] = $poly;
         }
@@ -135,6 +164,7 @@ class ParkingMeasurementLayoutTest extends ParkingTestCase
         $restored = collect($map['slots'])->firstWhere('slot_code', 'M-23');
         $this->assertTrue($restored['placed']);
         $this->assertSame('maintenance', $restored['status']);
+        $this->assertSame(55, collect($map['slots'])->where('area_code', 'CAR')->where('placed', true)->count());
         $this->assertSame(84, collect($map['slots'])->where('area_code', 'MC')->where('placed', true)->count());
         $this->assertSame($entry['slot_id'], $this->activeTransaction($car['vehicle_id'])->slot_id);
     }
