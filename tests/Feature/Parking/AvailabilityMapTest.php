@@ -21,7 +21,7 @@ class AvailabilityMapTest extends ParkingTestCase
             $map = $response->json();
             $this->assertSame($staff['geometry'], $map['geometry']);
             $this->assertSame($staff['measured_layout'], $map['measured_layout']);
-            $this->assertCount(114, $map['measured_layout']['positions']);
+            $this->assertCount(116, $map['measured_layout']['positions']);
             foreach ($map['measured_layout']['positions'] as $position) {
                 $this->assertEqualsCanonicalizing(['x', 'y', 'w', 'h', 'rotation'], array_keys($position));
             }
