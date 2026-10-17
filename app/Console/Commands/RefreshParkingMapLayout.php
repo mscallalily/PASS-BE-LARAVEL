@@ -14,7 +14,7 @@ class RefreshParkingMapLayout extends Command
     public function handle(ParkingLayoutUpdater $updater): int
     {
         $this->info($updater->apply().' slot diagram coordinate(s) updated.');
-        $this->line('Slot map: all 55 car and 84 motorcycle codes mapped. Car symbols are schematic; the separate measured proposal retains 30 car bays. Status, history, capacity and gate state are unchanged.');
+        $this->line('Default parking layout: 30 full-size car bays around the perimeter with a clear shared approach. The optional 55-car inventory diagram and all 139 records are retained. This coordinate refresh does not change access history, capacity or gate state.');
 
         return self::SUCCESS;
     }

@@ -34,12 +34,36 @@ class ParkingMapLayout
         return array_map(fn ($p) => self::point($area, ...$p), [[$x, $y], [$x + $w, $y], [$x + $w, $y + $h], [$x, $y + $h]]);
     }
 
+    /** Metric car perimeter banks: origin, width-axis angle and bay offsets. */
+    private static function carBanks(): array
+    {
+        return [
+            ['origin' => [50.5332069067, 18.3158377806], 'angle' => 174, 'offsets' => [0, 2.5, 6, 9], 'first' => 13, 'span' => 11.5, 'name' => 'South-east bank'],
+            ['origin' => [38.6448041047, 17.0068816096], 'angle' => 144, 'offsets' => [0, 3, 5.75], 'first' => 17, 'span' => 8.25, 'name' => 'South diagonal bank'],
+            ['origin' => [22.3128293891, 28.7579025822], 'angle' => -133, 'offsets' => [0, 2.75, 6, 8.5, 11, 13.5, 16, 19, 21.5, 24], 'first' => 20, 'span' => 26.5, 'name' => 'West diagonal bank'],
+        ];
+    }
+
+    private static function carRectangle(array $origin, float $width, float $depth, float $angle = 0): array
+    {
+        $r = deg2rad($angle);
+
+        return array_map(fn ($p) => self::point('CAR', $origin[0] + $p[0] * cos($r) - $p[1] * sin($r), $origin[1] + $p[0] * sin($r) + $p[1] * cos($r)), [[0, 0], [$width, 0], [$width, $depth], [0, $depth]]);
+    }
+
+    /** The 3.06 m shared approach, through the western opening. */
+    private static function carApproach(): array
+    {
+        return [[-1.27, 1.10], [9, 2.5], [12, 5.5], [14.5, 9.5]];
+    }
+
     public static function bays(bool $measured = false): array
     {
         $bays = [];
-        $add = function (string $area, int $number, float $x, float $y, float $w, float $h, string $row, bool $pwd = false) use (&$bays, $measured) {
-            [$gx, $gy] = self::point($area, $x + $w / 2, $y + $h / 2);
-            $bays[] = ['area' => $area, 'row' => $row, 'index' => $number - 1, 'x' => round($gx, 3), 'y' => round($gy, 3), 'w' => $w * self::UNITS_PER_METRE, 'h' => $h * self::UNITS_PER_METRE, 'rotation' => $area === 'CAR' ? 10.0 : -21.0, 'label' => (string) $number, 'slot_number' => $number, 'kind' => $pwd ? 'pwd' : 'slot', 'pwd' => $pwd, 'placement_basis' => $area === 'CAR' && ! $measured ? 'diagram' : 'proposed', 'note' => 'Proposed position; physical layout and manoeuvring require campus confirmation.'];
+        $add = function (string $area, int $number, float $x, float $y, float $w, float $h, string $row, bool $pwd = false, float $angle = 0) use (&$bays, $measured) {
+            $r = deg2rad($angle);
+            [$gx, $gy] = self::point($area, $x + $w / 2 * cos($r) - $h / 2 * sin($r), $y + $w / 2 * sin($r) + $h / 2 * cos($r));
+            $bays[] = ['area' => $area, 'row' => $row, 'index' => $number - 1, 'x' => round($gx, 3), 'y' => round($gy, 3), 'w' => $w * self::UNITS_PER_METRE, 'h' => $h * self::UNITS_PER_METRE, 'rotation' => $area === 'CAR' ? 10.0 + $angle : -21.0, 'label' => (string) $number, 'slot_number' => $number, 'kind' => $pwd ? 'pwd' : 'slot', 'pwd' => $pwd, 'placement_basis' => $area === 'CAR' && ! $measured ? 'diagram' : 'proposed', 'note' => 'Proposed position; physical layout and manoeuvring require campus confirmation.'];
         };
         // 28.00 m of bays, 0.40 m end margin and 2.56 m connecting end aisle.
         // Width: 0.20 + 2.00 + 1.20 + 2.00 + 1.20 + 2.00 + 0.20 = 8.80 m.
@@ -49,18 +73,17 @@ class ParkingMapLayout
             }
         }
         if ($measured) {
-            // A conservative car proposal, NOT a maximum-capacity calculation.
-            // Keep the existing C-42 accessible designation; do not change inventory policy.
-            $add('CAR', 42, 7.5, 0, 4.0, 5.0, 'Proposed north row', true);
-            foreach (range(1, 15) as $i) {
-                $add('CAR', $i, 11.5 + ($i - 1) * 2.5, 0, 2.5, 5.0, 'Proposed north row');
+            // Use the entire perimeter, keeping full-size bays and access aisles.
+            // One packing candidate near the west opening is reserved for access.
+            $add('CAR', 42, 15.25, 0.01, 4.0, 5.0, 'North bank / accessible', true);
+            foreach (range(1, 12) as $i) {
+                $add('CAR', $i, 19.25 + ($i - 1) * 2.5, 0.06, 2.5, 5.0, 'North bank');
             }
-            foreach (range(16, 25) as $i) {
-                $add('CAR', $i, 12 + ($i - 16) * 2.5, 12.2, 2.5, 5.0, 'Proposed south-west row');
-            }
-            // A separate bank avoids the concave notch; it is not paved over.
-            foreach (range(26, 29) as $i) {
-                $add('CAR', $i, 38.75 + ($i - 26) * 2.5, 12.2, 2.5, 5.0, 'Proposed south-east row');
+            foreach (self::carBanks() as $bank) {
+                $r = deg2rad($bank['angle']);
+                foreach ($bank['offsets'] as $index => $offset) {
+                    $add('CAR', $bank['first'] + $index, $bank['origin'][0] + $offset * cos($r), $bank['origin'][1] + $offset * sin($r), 2.5, 5.0, $bank['name'], false, $bank['angle']);
+                }
             }
         } else {
             // All 55 existing car codes have separate diagram symbols. These are
@@ -100,8 +123,22 @@ class ParkingMapLayout
         }
         $clearances[] = ['polygon' => self::rectangle('MC', 28.4, 0, 2.56, 8.8), 'kind' => 'motorcycle_end_aisle', 'width_m' => 2.56];
         if ($measured) {
-            $clearances[] = ['polygon' => self::rectangle('CAR', 7.5, 6.2, 41.5, 6), 'kind' => 'car_aisle', 'width_m' => 6.0];
-            $clearances[] = ['polygon' => self::rectangle('CAR', 7.5, 5, 4, 1.2), 'kind' => 'walkway', 'width_m' => 1.2];
+            $clearances[] = ['polygon' => self::carRectangle([19.25, 5.06], 30, 6), 'kind' => 'car_aisle', 'width_m' => 6.0];
+            $clearances[] = ['polygon' => self::carRectangle([15.25, 6.21], 4, 6), 'kind' => 'car_aisle', 'width_m' => 6.0];
+            $clearances[] = ['polygon' => self::carRectangle([15.25, 5.01], 4, 1.2), 'kind' => 'walkway', 'width_m' => 1.2];
+            foreach (self::carBanks() as $bank) {
+                $r = deg2rad($bank['angle']);
+                $origin = [$bank['origin'][0] - 5 * sin($r), $bank['origin'][1] + 5 * cos($r)];
+                $clearances[] = ['polygon' => self::carRectangle($origin, $bank['span'], 6, $bank['angle']), 'kind' => 'car_aisle', 'width_m' => 6.0];
+            }
+            $approach = self::carApproach();
+            foreach (array_slice($approach, 0, -1) as $i => $from) {
+                $to = $approach[$i + 1];
+                $angle = rad2deg(atan2($to[1] - $from[1], $to[0] - $from[0]));
+                $r = deg2rad($angle);
+                $origin = [$from[0] + 1.53 * sin($r), $from[1] - 1.53 * cos($r)];
+                $clearances[] = ['polygon' => self::carRectangle($origin, hypot($to[0] - $from[0], $to[1] - $from[1]), 3.06, $angle), 'kind' => 'car_approach', 'width_m' => 3.06];
+            }
         } else {
             foreach ([[7.5, 3.6, 39, 3], [10.5, 10.2, 38, 3], [7.5, 3.6, 3, 6.6]] as $rect) {
                 $clearances[] = ['polygon' => self::rectangle('CAR', ...$rect), 'kind' => 'diagram_aisle'];
@@ -111,7 +148,7 @@ class ParkingMapLayout
         return [
             'areas' => [
                 ['area' => 'MC', 'polygon' => $mc, 'label' => '84 COMPACT MOTORCYCLE BAYS · PROPOSED', 'label_at' => self::point('MC', 14.2, 9.9), 'label_angle' => -21, 'sign_at' => self::point('MC', 15.48, 10.2)],
-                ['area' => 'CAR', 'polygon' => $car, 'label' => $measured ? '30 CAR BAYS · MEASURED PROPOSAL' : '55 CAR SLOTS · DIAGRAM', 'label_at' => self::point('CAR', 28, 22.4), 'label_angle' => 10, 'sign_at' => self::point('CAR', 28, -1.4)],
+                ['area' => 'CAR', 'polygon' => $car, 'label' => $measured ? '30 FULL-SIZE CAR BAYS · PROPOSED' : '55 CAR SLOTS · DIAGRAM', 'label_at' => self::point('CAR', 27, 13.3), 'label_angle' => 10, 'sign_at' => self::point('CAR', 28, -1.4)],
             ],
             'road' => ['polygon' => self::rectangle('MC', 0, -3.06, 30.96, 3.06), 'label' => 'SHARED ACCESS · 3.06 m', 'label_at' => self::point('MC', 15.5, -1.53), 'label_angle' => -21, 'width_m' => 3.06, 'traffic' => 'alternating'],
             'gate' => ['at' => [69, 114], 'angle' => -21, 'label' => 'MAIN ENTRANCE / EXIT', 'sublabel' => 'Shared controlled access', 'label_at' => [95, 27]],
@@ -119,17 +156,26 @@ class ParkingMapLayout
                 ['points' => [self::point('MC', 6, -1.53), self::point('MC', 10, -1.53)], 'kind' => 'road_in'],
                 ['points' => [self::point('MC', 25, -1.53), self::point('MC', 21, -1.53)], 'kind' => 'road_out'],
                 ['points' => [self::point('MC', 29.68, -1.53), self::point('MC', 29.68, 7.8)], 'kind' => 'to_area'],
-                ['points' => [self::point('MC', 30.96, -1.53), [328, 48], self::point('CAR', 7.5, $measured ? 9.2 : 5.1)], 'kind' => 'to_area'],
+                ['points' => $measured ? [self::point('MC', 30.96, -1.53), ...array_map(fn ($p) => self::point('CAR', ...$p), self::carApproach())] : [self::point('MC', 30.96, -1.53), [328, 48], self::point('CAR', 7.5, 5.1)], 'kind' => 'to_area'],
                 ['points' => [self::point('MC', 2, 2.8), self::point('MC', 27.5, 2.8)], 'kind' => 'lane'],
                 ['points' => [self::point('MC', 27.5, 6), self::point('MC', 2, 6)], 'kind' => 'lane'],
-                ['points' => [self::point('CAR', 11, $measured ? 9.2 : 5.1), self::point('CAR', 46, $measured ? 9.2 : 5.1)], 'kind' => 'lane'],
-                ...($measured ? [] : [['points' => [self::point('CAR', 46, 11.7), self::point('CAR', 11, 11.7)], 'kind' => 'lane']]),
+                ...($measured ? [
+                    ['points' => [self::point('CAR', 21, 7.8), self::point('CAR', 43, 7.8)], 'kind' => 'lane'],
+                    ['points' => [self::point('CAR', 43, 10), self::point('CAR', 26, 11.5), self::point('CAR', 18, 11)], 'kind' => 'lane'],
+                    ['points' => [self::point('CAR', 26, 12), self::point('CAR', 25.5, 17), self::point('CAR', 26.5, 20)], 'kind' => 'lane'],
+                    ['points' => [self::point('CAR', 26, 20.5), self::point('CAR', 24, 18), self::point('CAR', 23, 14)], 'kind' => 'lane'],
+                    ['points' => [self::point('CAR', 11, 4.5), self::point('CAR', 9, 2.5)], 'kind' => 'road_out'],
+                ] : [
+                    ['points' => [self::point('CAR', 11, 5.1), self::point('CAR', 46, 5.1)], 'kind' => 'lane'],
+                    ['points' => [self::point('CAR', 46, 11.7), self::point('CAR', 11, 11.7)], 'kind' => 'lane'],
+                ]),
             ],
             'circulation' => $clearances,
+            'circulation_labels' => $measured ? [['text' => 'KEEP CLEAR', 'at' => self::point('CAR', 25, 15), 'angle' => 10], ['text' => 'SHARED APPROACH', 'at' => self::point('CAR', 6, 1.3), 'angle' => 20]] : [],
             'dimensions' => self::referenceDimensions(),
             'measurement_basis' => self::measurementBasis($measured),
             'proposed_slot_codes' => array_keys(self::slotPositions($measured)),
-            'connector' => ['polygon' => [[299, 14], [333, 28], self::point('CAR', 8, $measured ? 9.2 : 5.1), self::point('CAR', 3, $measured ? 9.2 : 5.1), [302, 42]]],
+            'connector' => ['polygon' => $measured ? [self::point('MC', 30.96, -3.06), self::point('CAR', -0.115, 0.10), self::point('CAR', -2.425, 2.10), self::point('MC', 30.96, 0)] : [[299, 14], [333, 28], self::point('CAR', 8, 5.1), self::point('CAR', 3, 5.1), [302, 42]]],
             'site' => ['polygon' => [[45, 92], [291, -8], [736, 74], [740, 285], [486, 332], [342, 180], [102, 215], [52, 136]]],
             'islands' => [], 'trays' => [],
         ];
@@ -158,9 +204,11 @@ class ParkingMapLayout
             'source_image' => '/references/dyci-motorcycle-boundary-20261016.png',
             'car_source_image' => '/references/dyci-car-boundary-20261016.png',
             'car_edges_m' => self::CAR_EDGES,
-            'note' => $measured ? 'Proposed layout at one scale: 8 drawing units = 1 metre. Motorcycle dimensions are owner-reported. Car edge lengths follow the supplied order, starting at the right edge; angles are estimated from the image, not surveyed. Earlier cumulative map-ruler labels have been removed.' : 'Complete slot map: C-01–C-55 and M-01–M-84. Car bay symbols and aisles are schematic, not to scale. Their diagram positions do not establish physical fit. Use Measured proposal for metre-sized bays and owner-reported boundaries.',
+            'note' => $measured ? 'Proposed layout at one scale: 8 drawing units = 1 metre. Motorcycle dimensions are owner-reported. Car edge lengths follow the supplied order, starting at the right edge; angles are estimated from the image, not surveyed. Earlier cumulative map-ruler labels have been removed.' : 'Complete slot map: C-01–C-55 and M-01–M-84. Car bay symbols and aisles are schematic, not to scale. Their diagram positions do not establish physical fit. Use Parking layout for full-size bays and owner-reported boundaries.',
             'motorcycle_proposal' => '84 compact bays: 3 rows × 28, each 1.00 × 2.00 m. Two 1.20 m internal aisles, a 2.56 m connecting end aisle, 0.40 m end margin and 0.20 m side margins. Narrow aisles are a walk/push proposal for compact motorcycles and scooters; actual vehicle sizes and manoeuvring must be checked.',
-            'car_proposal' => $measured ? '30 car bays shown, including the existing C-42 accessible designation, with a 6.00 m aisle and a 1.20 m front walkway at C-42. This is one conservative arrangement, not the maximum site capacity. The 55-car inventory is retained; 25 car codes are omitted only from this measured view. Fitting all 55 has not been demonstrated. Accessible space count and continuous accessible route still require review.' : 'All 55 existing car slots are mapped as separate live diagram symbols. Slot IDs, history and availability are shared with the measured proposal. Diagram bay sizes are not physical dimensions. The measured proposal currently draws 30 car bays; a physical 55-car arrangement remains unverified.',
+            'car_proposal' => $measured ? '30 full-size car bays: 13 north (including C-42), 4 south-east, 3 south diagonal and 10 west diagonal. Regular bays remain 2.50 × 5.00 m; C-42 is 4.00 × 5.00 m with a 1.20 m front walkway. Six-metre bay access aisles share the central circulation area. The 3.06 m west approach is alternating shared access. One near-entrance packing candidate is omitted to keep the approach clear. This is a proposed arrangement, not a maximum-capacity or vehicle swept-path certification. The 55-car inventory is retained; 25 codes have no position in this measured view.' : 'All 55 existing car slots are mapped as separate live diagram symbols. Slot IDs, history and availability are shared with the measured proposal. Diagram bay sizes are not physical dimensions. Parking layout currently draws 30 full-size car bays; a physical 55-car arrangement remains unverified.',
+            'vehicle_measurements' => ['car_width_m' => 2.0447, 'car_length_m' => 4.7752, 'car_mirrors_included' => false, 'motorcycle_width_m' => 0.5969, 'motorcycle_length_m' => 1.905, 'note' => 'Owner-measured maximum dimensions. Car width is body-only; mirrors, wheelbase, steering lock and turning envelope are not measured. These figures do not replace bay dimensions.'],
+            'circulation_note' => $measured ? 'The outer parcel is retained. Diagonal perimeter banks use the lower and western space; the centre is reserved for reversing and circulation. Flow arrows indicate direction, not a validated U-turn or swept path. Confirm mirrors, steering geometry, clear widths and the shared junction on site.' : 'This optional inventory diagram uses schematic symbols. It does not represent physical aisle widths or a validated vehicle turning path.',
             'inventory' => ['motorcycle_configured' => 84, 'motorcycle_drawn' => 84, 'car_configured' => 55, 'car_drawn' => $measured ? 30 : 55],
             'standards' => [
                 ['type' => 'car', 'label' => 'Car bay', 'width_m' => 2.5, 'length_m' => 5.0, 'basis' => 'Philippine NBCP perpendicular/diagonal bay reference. Six-metre car aisle is a proposed design allowance; turning movements require site validation.', 'source' => 'National Building Code IRR, Rule VII, Section 707(4)(b), Pasig government copy, p. 100', 'url' => 'https://assets.pasigcity.gov.ph/storage/city_ordinance/2024/10/21/67c675622ba621741059426part%201.pdf'],

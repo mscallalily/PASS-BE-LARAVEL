@@ -27,7 +27,7 @@ class ParkingMeasurementLayoutTest extends ParkingTestCase
         $this->assertCount(114, ParkingMapLayout::slotPositions(true));
         $this->assertSame(['motorcycle_configured' => 84, 'motorcycle_drawn' => 84, 'car_configured' => 55, 'car_drawn' => 30], $g['measurement_basis']['inventory']);
         $this->assertFalse($g['measurement_basis']['survey_verified']);
-        $this->assertStringContainsString('not the maximum', $g['measurement_basis']['car_proposal']);
+        $this->assertStringContainsString('not a maximum-capacity', $g['measurement_basis']['car_proposal']);
         $this->assertStringContainsString('walk/push', $g['measurement_basis']['motorcycle_proposal']);
         $this->assertSame([], $g['trays']);
         $this->assertNotContains('160.00 m', array_column($g['dimensions'], 'text'));
@@ -93,6 +93,36 @@ class ParkingMeasurementLayoutTest extends ParkingTestCase
                 $this->assertFalse($this->overlap($poly, $other), "$code symbol overlaps another symbol");
             }
             $polygons[$code] = $poly;
+        }
+    }
+
+    public function test_perimeter_layout_uses_south_and_west_space_and_keeps_approach_clear(): void
+    {
+        $g = ParkingMapLayout::geometry(true);
+        $bays = array_filter(ParkingMapLayout::bays(true), fn ($bay) => $bay['area'] === 'CAR');
+        $counts = array_count_values(array_column($bays, 'row'));
+        $this->assertSame(12, $counts['North bank']);
+        $this->assertSame(4, $counts['South-east bank']);
+        $this->assertSame(3, $counts['South diagonal bank']);
+        $this->assertSame(10, $counts['West diagonal bank']);
+        $this->assertSame(1, $counts['North bank / accessible']);
+        $this->assertSame(5, count(array_filter($g['circulation'], fn ($c) => ($c['width_m'] ?? null) === 6.0)));
+        $this->assertCount(3, array_filter($g['circulation'], fn ($c) => $c['kind'] === 'car_approach' && $c['width_m'] === 3.06));
+        $this->assertFalse($g['measurement_basis']['vehicle_measurements']['car_mirrors_included']);
+        $this->assertSame(2.0447, $g['measurement_basis']['vehicle_measurements']['car_width_m']);
+        foreach ($g['lanes'] as $lane) {
+            foreach (array_slice($lane['points'], 0, -1) as $i => $from) {
+                $to = $lane['points'][$i + 1];
+                foreach (range(0, 20) as $step) {
+                    $p = [$from[0] + ($to[0] - $from[0]) * $step / 20, $from[1] + ($to[1] - $from[1]) * $step / 20];
+                    foreach ($bays as $bay) {
+                        $this->assertFalse($this->inside($p, $this->corners($bay)), 'Flow arrows must not cross a car bay');
+                    }
+                }
+            }
+        }
+        foreach ($bays as $bay) {
+            $this->assertFalse($this->overlap($this->corners($bay), $g['connector']['polygon']), 'No bay may block the shared entry/exit connector');
         }
     }
 

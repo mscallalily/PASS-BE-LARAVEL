@@ -1,16 +1,21 @@
-# Complete slot map and measured proposal — 17 October 2026
+# Perimeter parking layout and circulation — 17 October 2026
 
-The default Slot map now shows every C-01–C-55 and M-01–M-84 record. Car symbols are schematic, not physical bay dimensions. Measured proposal is a separate view retaining the earlier metre-sized 30-car arrangement. Both Plan and 3D use the selected view and the same live slot IDs/status.
+Parking layout is now the default in Plan, 3D and SVG fallback. It uses the supplied car polygon more fully: 13 north bays (12 regular + existing C-42 accessible), 4 south-east bays, 3 south diagonal bays and 10 west diagonal bays. The count remains 30. A perimeter packing search found 31 candidate rectangles; one near the west entrance is omitted to keep access clear. This is not a proof of the global maximum capacity.
 
-This supersedes the earlier cumulative-ruler dimension interpretation. It is a metric prototype proposal, not a surveyed campus plan or an approved physical capacity.
+Regular car bays remain **2.50 × 5.00 m**. C-42 remains **4.00 × 5.00 m**, with a **1.20 m front walkway**. There is no shrinking of physical bay templates. The lower and western space now carries actual bay rectangles instead of being left as a large blank triangle. The central open space is reserved for reversing and circulation.
 
-## Measurement inputs and assumptions
+Each bank has a **6.00 m bay access aisle**. The western approach follows the separate **3.06 m shared road** through the proposed west opening. Entry and return arrows indicate circulation direction; they are not a vehicle tracking analysis or a certified U-turn. The junction, corner manoeuvres and accessible route still require physical/swept-path validation.
 
-Owner-reported motorcycle parcel: **30.96 × 8.80 m**, excluding the **3.06 m** shared access road. The existing gate location and diagonal access route are retained; internal aisles are rearranged. A 3.06 m total road width is shown as shared controlled access, not two simultaneous car lanes.
+The outer car polygon has NOT been enlarged beyond the owner-provided dimensions. Edge lengths remain **18.42, 12.04, 2.60, 20.18, 33.37, 3.00, 3.36, 49.26 m**; their order/bearings remain assumed from the image, not a verified site survey. The motorcycle parcel and shared gate/road are retained: **30.96 × 8.80 m** parking and separate **3.06 m** road width.
 
-Car perimeter lengths, in supplied order: **18.42, 12.04, 2.60, 20.18, 33.37, 3.00, 3.36, 49.26 m**. The proposed mapping begins at the right edge and continues around the notch, returning along the long top edge. Bearings are estimated from the image with a closed polygon constrained to those lengths. The numbers alone do not determine the actual shape or area. Campus confirmation is required.
+## Owner-measured vehicle reference
 
-In Measured proposal, bay and boundary geometry uses **8 drawing units per metre**. In the complete Slot map, car symbols and aisles are dimensionless diagram shapes. `ParkingMapLayout::SCALE` is separately the integer database precision factor, not a metre conversion.
+| Vehicle | Width | Length | Measurement limitation |
+| --- | --- | --- | --- |
+| Car | 2.0447 m (6 ft 8.5 in) | 4.7752 m (15 ft 8 in) | Width is body-only; mirrors are not included. |
+| Motorcycle | 0.5969 m (1 ft 11.5 in) | 1.9050 m (6 ft 3 in) | Whether mirrors/handlebars are included is unconfirmed. |
+
+These measurements do not replace bay dimensions. Mirrors, wheelbase, steering lock, slopes and vehicle swept paths are unmeasured. The 1 × 2 m compact motorcycle template has only 0.095 m total extra length relative to the longest measured motorcycle; this remains a compact prototype proposal requiring physical checking.
 
 ## Motorcycle arrangement
 
@@ -23,34 +28,14 @@ In Measured proposal, bay and boundary geometry uses **8 drawing units per metre
 
 The 1 × 2 m bay reference is North Tyneside Council, *Transport and Highways SPD 2022*, Appendix E. It is not asserted as a Philippine minimum. The earlier 1.30 × 2.80 m template cannot fit 84 bays in this parcel even before aisles: bay rectangles alone need 305.76 m², versus 272.448 m² available.
 
-## Measured car arrangement and unresolved physical capacity
+## Inventory and safe update
 
-The separate Measured proposal draws **30 car bays**: 29 at **2.50 × 5.00 m**, plus the existing C-42 accessible designation at **4.00 × 5.00 m**. A 6.00 m reversing aisle and a 1.20 m front walkway at C-42 are drawn. The concave notch remains clear.
+All 139 inventory records are retained (55 car + 84 motorcycle). The optional Inventory diagram still shows all 55 schematic car symbols for record lookup; Parking layout shows 30 full-size proposed car bays. The remaining 25 car codes have no position in the physical proposal. Changing views does not approve or change operating capacity, access rules, slot status or existing transactions. Capacity changes require a separate settled campus decision.
 
-This is one conservative arrangement, **not a proven maximum**. Fitting 55 cars has not been demonstrated. The accessible count, continuous pedestrian route, entrances, swept paths and actual boundaries still need campus review. A single retained accessible designation does not establish compliance with the 2024 BP 344 IRR requirements.
-
-All **139 database inventory records** remain: 84 motorcycle, 55 car. The default Slot map now gives all 55 car records diagram coordinates. In Measured proposal only, 25 car codes have no physical proposal position and are omitted from the drawing; their live data and inventory records remain intact. Switching views never creates or deletes inventory or parking sessions. Historical transactions, slot status, IDs and gate state remain intact. Current assignment/capacity rules are not changed by this drawing update; this proposal must not be used as approval to admit 55 cars physically.
-
-## Complete slot diagram
-
-The default car diagram uses three rows with 19, 19 and 17 individual symbols, for 55 total. C-42 retains its existing accessible designation. Symbol rectangles are kept inside the parcel and separate from each other and the displayed diagram aisles. Their smaller diagram dimensions must not be interpreted as approved car bay dimensions. The Measured proposal view preserves the nominal 2.50 × 5.00 m car template, the 6.00 m aisle and all original boundary inputs.
-
-## Apply locally
-
-After importing the matching backend and frontend bundles:
-
-```powershell
-php artisan route:clear
-php artisan parking:refresh-layout
-php artisan test --filter="ParkingMeasurementLayoutTest|AvailabilityMapTest"
-```
-
-Use `parking:refresh-layout` for this update rather than reseeding operating data. No schema migration is needed. In the frontend, run `npm run build`, then open `/app/parking/layout` or `/guest-dashboard/parking`. Slot map · 55 cars is selected by default. Compare Plan/3D, select C-55, then switch to Measured proposal to inspect the separate physical arrangement.
+After importing the matching bundles, run `php artisan route:clear` and `php artisan parking:refresh-layout`. No schema migration or operational seeding is needed. Build the frontend with `npm run build`. Check `/app/parking/layout` and `/guest-dashboard/parking`; Parking layout should be selected by default.
 
 ## Verification scope
 
-Geometry tests check reported lengths, bay dimensions, all drawn bays inside their own parcel, pairwise separation, and clearance from the access road/aisles/walkway. Coordinate refresh tests preserve active transactions, status, inventory and gate state. Server-side privacy tests keep user/guest maps read-only and exclude other people's identities. These software checks do **not** certify physical manoeuvring or approved capacity.
+Geometry checks retain all owner edge lengths and bay dimensions; sample all bay edges inside their parcels; reject overlaps with other bays, aisles, approach corridors and the shared connector; verify the 13/4/3/10 bank arrangement; and check painted flow lines do not cross car bays. Coordinate refresh preserves active sessions, IDs, status, inventory and gate state. Privacy tests cover both live slot records and the static alternative geometry. Software checks do not certify physical turning clearance or full accessibility compliance.
 
-Sources are linked in the application's measurement panel: Philippine NBCP IRR (Pasig government reproduction), North Tyneside transport SPD and NCDA revised 2024 BP 344 IRR.
-
-Regression coverage includes all 55 car codes appearing exactly once, symbols inside the parcel without overlapping each other or the diagram aisles, C-55 entry/refresh/exit visibility, identical live IDs/status between layout views, and server-side user/guest redaction. The retained measured view has separate metre-sized geometry checks.
+Sources remain linked in Measurements & design basis: Philippine NBCP IRR (Pasig government copy), North Tyneside transport guidance (2.5 × 5 m bays / 6 m reversing reference), and NCDA revised 2024 BP 344 IRR. The source bay/walkway dimensions do not establish accessible bay count or a complete continuous accessible route.
