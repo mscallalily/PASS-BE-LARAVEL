@@ -83,7 +83,10 @@ class UserManagementController extends Controller
                 'idNum' => $user->user_code,
                 'role' => $user->roles->first()?->role_code,
                 'userType' => $user->user_type,
-                'dept' => $profile?->department?->department_name,
+                'dept' => $profile?->registration_unit ?: $profile?->department?->department_name,
+                'registrationCategory' => $profile?->registration_category,
+                'schoolIdCheck' => $profile?->school_id_check_result,
+                'schoolIdSubmitted' => (bool) $profile?->school_id_document_path,
                 'contact' => $profile?->contact_number,
                 'status' => $user->account_status,
                 'registered' => $user->created_at,
@@ -93,6 +96,16 @@ class UserManagementController extends Controller
         return response()->json([
             'users' => $users,
         ]);
+    }
+
+    public function schoolId(Request $request, int $id)
+    {
+        if (!$request->user() || !$this->canManageUsers($request->user())) return response()->json(['message'=>'Unauthorized access.'], 403);
+        $user = User::with('profile')->findOrFail($id);
+        $path = $user->profile?->school_id_document_path;
+        $disk = \Illuminate\Support\Facades\Storage::disk('private');
+        if (!$path || !$disk->exists($path)) return response()->json(['message'=>'ID document not found.'], 404);
+        return $disk->response($path, 'institutional-id.'.pathinfo($path, PATHINFO_EXTENSION), ['Cache-Control'=>'no-store, private', 'X-Content-Type-Options'=>'nosniff'], 'inline');
     }
 
     /**

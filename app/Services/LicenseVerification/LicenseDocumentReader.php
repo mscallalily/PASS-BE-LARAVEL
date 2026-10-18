@@ -30,16 +30,22 @@ class LicenseDocumentReader
      *     sharpness: ?float
      * }
      */
-    public function read(string $path, string $mime): array
+    public function read(string $path, string $mime, int $pageMode = 3, ?int $timeout = null): array
     {
         if ($mime === 'application/pdf') {
             return $this->readPdf($path);
         }
 
-        return $this->readImage($path);
+        return $this->readImage($path, $pageMode, $timeout);
     }
 
-    private function readImage(string $path): array
+    /** Read an already prepared OCR region without re-measuring/downscaling it. */
+    public function readTextImage(string $path, int $pageMode = 6): array
+    {
+        return $this->tesseract($path, $pageMode, 20);
+    }
+
+    private function readImage(string $path, int $pageMode, ?int $timeout): array
     {
         $result = [
             'kind' => 'image',
@@ -74,13 +80,13 @@ class LicenseDocumentReader
             $image = $this->scaleToWidth($image, self::OCR_MIN_WIDTH);
         }
 
-        $tempFile = tempnam(sys_get_temp_dir(), 'lic') . '.png';
+        $tempFile = tempnam(sys_get_temp_dir(), 'lic');
 
         try {
             imagepng($image, $tempFile);
             imagedestroy($image);
 
-            return array_merge($result, $this->tesseract($tempFile));
+            return array_merge($result, $this->tesseract($tempFile, $pageMode, $timeout));
         } finally {
             @unlink($tempFile);
         }
@@ -136,13 +142,13 @@ class LicenseDocumentReader
     /**
      * Run Tesseract and return the recognized text with its mean word confidence.
      */
-    private function tesseract(string $imagePath): array
+    private function tesseract(string $imagePath, int $pageMode = 3, ?int $timeout = null): array
     {
         $binary = config('services.license_ocr.tesseract_path', 'tesseract');
 
         try {
-            $process = Process::timeout(config('services.license_ocr.timeout', 60))
-                ->run([$binary, $imagePath, 'stdout', '-l', 'eng', '--psm', '3', 'tsv']);
+            $process = Process::timeout($timeout ?? config('services.license_ocr.timeout', 60))
+                ->run([$binary, $imagePath, 'stdout', '-l', 'eng', '--psm', (string) $pageMode, 'tsv']);
         } catch (Throwable $e) {
             return ['engine_available' => false, 'engine_error' => 'The OCR engine is not available on the server.'];
         }
@@ -154,6 +160,7 @@ class LicenseDocumentReader
         // TSV columns: level page block par line word left top width height conf text
         $lines = [];
         $confidences = [];
+        $words = [];
 
         foreach (preg_split('/\R/', $process->output()) as $index => $row) {
             $cols = explode("\t", $row);
@@ -171,12 +178,14 @@ class LicenseDocumentReader
 
             $lines["{$cols[2]}-{$cols[3]}-{$cols[4]}"][] = $word;
             $confidences[] = $conf;
+            $words[] = ['text' => $word, 'confidence' => $conf];
         }
 
         return [
             'engine_available' => true,
             'engine_error' => null,
             'text' => implode("\n", array_map(fn ($words) => implode(' ', $words), $lines)),
+            'words' => $words,
             'confidence' => $confidences ? round(array_sum($confidences) / count($confidences), 1) : null,
         ];
     }

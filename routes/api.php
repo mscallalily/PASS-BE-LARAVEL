@@ -27,7 +27,9 @@ use App\Http\Controllers\Api\ParkingSlotSimulationController;
 
 Route::get('/departments', [DepartmentController::class, 'index']);
 
-Route::post('/register', [AuthController::class, 'register']);
+Route::get('/registration/options', [\App\Http\Controllers\Api\RegistrationIdController::class, 'options']);
+Route::post('/registration/id-check', [\App\Http\Controllers\Api\RegistrationIdController::class, 'check'])->middleware('throttle:registration-id-read');
+Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:regular-registration');
 
 // Guest (visitor) self-registration.
 Route::post('/guest/register', [GuestAccountController::class, 'register'])
@@ -87,6 +89,7 @@ Route::post(
     '/vehicles',
     [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'store']
 );
+    Route::get('/admin/users/{id}/school-id', [UserManagementController::class, 'schoolId'])->whereNumber('id');
     Route::get('/me', [AuthController::class, 'me']);
 
     // Change markers for the shared frontend refresh (polled every few seconds while a tab is visible).
