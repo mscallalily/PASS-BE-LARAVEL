@@ -38,37 +38,37 @@ class ParkingMapLayout
     private static function carProposal(): array
     {
         return [
-            ['x' => 19.250000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North row', 'type' => 'perpendicular'],
-            ['x' => 21.750000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North row', 'type' => 'perpendicular'],
-            ['x' => 24.250000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North row', 'type' => 'perpendicular'],
-            ['x' => 26.750000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North row', 'type' => 'perpendicular'],
-            ['x' => 29.250000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North row', 'type' => 'perpendicular'],
-            ['x' => 31.750000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North row', 'type' => 'perpendicular'],
-            ['x' => 34.250000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North row', 'type' => 'perpendicular'],
-            ['x' => 36.750000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North row', 'type' => 'perpendicular'],
-            ['x' => 39.250000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North row', 'type' => 'perpendicular'],
-            ['x' => 41.750000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North row', 'type' => 'perpendicular'],
-            ['x' => 44.250000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North row', 'type' => 'perpendicular'],
-            ['x' => 46.750000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North row', 'type' => 'perpendicular'],
-            ['x' => 23.000000000, 'y' => 16.250000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Central row', 'type' => 'perpendicular'],
-            ['x' => 25.500000000, 'y' => 16.250000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Central row', 'type' => 'perpendicular'],
-            ['x' => 28.000000000, 'y' => 16.250000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Central row', 'type' => 'perpendicular'],
-            ['x' => 30.500000000, 'y' => 16.250000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Central row', 'type' => 'perpendicular'],
-            ['x' => 33.000000000, 'y' => 16.250000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Central row', 'type' => 'perpendicular'],
-            ['x' => 35.500000000, 'y' => 16.250000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Central row', 'type' => 'perpendicular'],
-            ['x' => 38.000000000, 'y' => 16.250000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Central row', 'type' => 'perpendicular'],
-            ['x' => 40.500000000, 'y' => 16.250000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Central row', 'type' => 'perpendicular'],
-            ['x' => 43.000000000, 'y' => 16.250000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Central row', 'type' => 'perpendicular'],
-            ['x' => 45.500000000, 'y' => 16.250000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Central row', 'type' => 'perpendicular'],
-            ['x' => 48.000000000, 'y' => 16.250000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Central row', 'type' => 'perpendicular'],
-            ['x' => 3.898873667, 'y' => 9.011352638, 'angle' => -133, 'width' => 6, 'depth' => 2.15, 'aisle' => 3.6, 'row' => 'West / lower edge', 'type' => 'parallel'],
-            ['x' => 5.603869568, 'y' => 10.839736893, 'angle' => -133, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'West / lower edge', 'type' => 'perpendicular'],
-            ['x' => 7.308865468, 'y' => 12.668121147, 'angle' => -133, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'West / lower edge', 'type' => 'perpendicular'],
-            ['x' => 10.036858908, 'y' => 15.593535953, 'angle' => -133, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'West / lower edge', 'type' => 'perpendicular'],
-            ['x' => 14.810847428, 'y' => 20.713011864, 'angle' => -133, 'width' => 6, 'depth' => 2.15, 'aisle' => 3.6, 'row' => 'West / lower edge', 'type' => 'parallel'],
-            ['x' => 18.902837589, 'y' => 25.101134074, 'angle' => -133, 'width' => 6, 'depth' => 2.15, 'aisle' => 3.6, 'row' => 'West / lower edge', 'type' => 'parallel'],
-            ['x' => 20.607833489, 'y' => 26.929518328, 'angle' => -133, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'West / lower edge', 'type' => 'perpendicular'],
-            ['x' => 22.312829389, 'y' => 28.757902582, 'angle' => -133, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'West / lower edge', 'type' => 'perpendicular'],
+            ['x' => 11.000000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 13.500000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 16.000000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 18.500000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 21.000000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 23.500000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 26.000000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 28.500000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 31.000000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 33.500000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 36.000000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 38.500000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 41.000000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 43.500000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 46.000000000, 'y' => 0.060000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 18.000000000, 'y' => 16.060000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Interior row A', 'type' => 'perpendicular'],
+            ['x' => 20.500000000, 'y' => 16.060000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Interior row A', 'type' => 'perpendicular'],
+            ['x' => 23.000000000, 'y' => 16.060000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Interior row A', 'type' => 'perpendicular'],
+            ['x' => 25.500000000, 'y' => 16.060000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Interior row A', 'type' => 'perpendicular'],
+            ['x' => 28.000000000, 'y' => 16.060000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Interior row A', 'type' => 'perpendicular'],
+            ['x' => 30.500000000, 'y' => 16.060000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Interior row A', 'type' => 'perpendicular'],
+            ['x' => 33.000000000, 'y' => 16.060000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Interior row A', 'type' => 'perpendicular'],
+            ['x' => 35.500000000, 'y' => 16.060000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Interior row A', 'type' => 'perpendicular'],
+            ['x' => 38.000000000, 'y' => 16.060000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Interior row A', 'type' => 'perpendicular'],
+            ['x' => 40.500000000, 'y' => 16.060000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Interior row A', 'type' => 'perpendicular'],
+            ['x' => 43.000000000, 'y' => 16.060000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Interior row A', 'type' => 'perpendicular'],
+            ['x' => 45.500000000, 'y' => 16.060000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Interior row A', 'type' => 'perpendicular'],
+            ['x' => 48.000000000, 'y' => 16.060000000, 'angle' => 180, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Interior row A', 'type' => 'perpendicular'],
+            ['x' => 19.000000000, 'y' => 16.060000000, 'angle' => 0, 'width' => 6, 'depth' => 2.15, 'aisle' => 3.6, 'row' => 'Interior row B', 'type' => 'parallel'],
+            ['x' => 25.000000000, 'y' => 16.060000000, 'angle' => 0, 'width' => 6, 'depth' => 2.15, 'aisle' => 3.6, 'row' => 'Interior row B', 'type' => 'parallel'],
+            ['x' => 22.293356545, 'y' => 28.707694930, 'angle' => -133, 'width' => 2.5, 'depth' => 5, 'aisle' => 6, 'row' => 'Perimeter', 'type' => 'perpendicular'],
         ];
     }
 
@@ -82,7 +82,7 @@ class ParkingMapLayout
     /** The 3.06 m shared approach, through the western opening. */
     private static function carApproach(): array
     {
-        return [[-1.27, 1.10], [9, 2.5], [12, 5.5], [14.5, 9.5]];
+        return [[-1.27, 1.10], [1.4, 4.7], [4.4, 8.7], [10, 8.7]];
     }
 
     public static function bays(bool $measured = false): array
@@ -101,7 +101,7 @@ class ParkingMapLayout
             }
         }
         if ($measured) {
-            $add('CAR', 42, 15.25, 0.01, 4.0, 5.0, 'North row / accessible', true);
+            $add('CAR', 42, 7, 0.06, 4.0, 5.0, 'North row / accessible', true);
             foreach (self::carProposal() as $i => $bay) {
                 $add('CAR', $i + 1, $bay['x'], $bay['y'], $bay['width'], $bay['depth'], $bay['row'], false, $bay['angle']);
             }
@@ -143,8 +143,8 @@ class ParkingMapLayout
         }
         $clearances[] = ['polygon' => self::rectangle('MC', 28.4, 0, 2.56, 8.8), 'kind' => 'motorcycle_end_aisle', 'width_m' => 2.56];
         if ($measured) {
-            $clearances[] = ['polygon' => self::carRectangle([15.25, 6.21], 4, 6), 'kind' => 'car_aisle', 'width_m' => 6.0];
-            $clearances[] = ['polygon' => self::carRectangle([15.25, 5.01], 4, 1.2), 'kind' => 'walkway', 'width_m' => 1.2];
+            $clearances[] = ['polygon' => self::carRectangle([7, 6.26], 4, 6), 'kind' => 'car_aisle', 'width_m' => 6.0];
+            $clearances[] = ['polygon' => self::carRectangle([7, 5.06], 4, 1.2), 'kind' => 'walkway', 'width_m' => 1.2];
             foreach (self::carProposal() as $bay) {
                 $angle = deg2rad($bay['angle']);
                 $front = [$bay['x'] - $bay['depth'] * sin($angle), $bay['y'] + $bay['depth'] * cos($angle)];
@@ -179,18 +179,17 @@ class ParkingMapLayout
                 ['points' => [self::point('MC', 2, 2.8), self::point('MC', 27.5, 2.8)], 'kind' => 'lane'],
                 ['points' => [self::point('MC', 27.5, 6), self::point('MC', 2, 6)], 'kind' => 'lane'],
                 ...($measured ? [
-                    ['points' => [self::point('CAR', 21, 7.2), self::point('CAR', 44, 7.2)], 'kind' => 'lane'],
-                    ['points' => [self::point('CAR', 44, 9.4), self::point('CAR', 21, 9.4), self::point('CAR', 15, 9.4)], 'kind' => 'lane'],
-                    ['points' => [self::point('CAR', 14.52, 9.48), self::point('CAR', 19.16, 17.24), self::point('CAR', 21.96, 19.96), self::point('CAR', 23.24, 20.2), self::point('CAR', 27.32, 22.36)], 'kind' => 'lane'],
-                    ['points' => [self::point('CAR', 19.16, 17.24), self::point('CAR', 14.52, 9.48)], 'kind' => 'road_out'],
-                    ['points' => [self::point('CAR', 11, 4.5), self::point('CAR', 9, 2.5)], 'kind' => 'road_out'],
+                    ['points' => [self::point('CAR', 11, 7.3), self::point('CAR', 45, 7.3)], 'kind' => 'lane'],
+                    ['points' => [self::point('CAR', 45, 9.3), self::point('CAR', 11, 9.3)], 'kind' => 'lane'],
+                    ['points' => [self::point('CAR', 9.0, 8.7), self::point('CAR', 14.15, 16.9), self::point('CAR', 14.3, 17.1), self::point('CAR', 14.5, 17.3), self::point('CAR', 14.7, 17.45), self::point('CAR', 18.3, 19.65), self::point('CAR', 18.5, 19.75), self::point('CAR', 27.3, 22.35)], 'kind' => 'lane'],
+                    ['points' => [self::point('CAR', 4.4, 8.7), self::point('CAR', 1.4, 4.7)], 'kind' => 'road_out'],
                 ] : [
                     ['points' => [self::point('CAR', 11, 5.1), self::point('CAR', 46, 5.1)], 'kind' => 'lane'],
                     ['points' => [self::point('CAR', 46, 11.7), self::point('CAR', 11, 11.7)], 'kind' => 'lane'],
                 ]),
             ],
             'circulation' => $clearances,
-            'circulation_labels' => $measured ? [['text' => 'KEEP CLEAR', 'at' => self::point('CAR', 16, 16), 'angle' => 10], ['text' => 'SHARED APPROACH', 'at' => self::point('CAR', 6, 1.3), 'angle' => 20]] : [],
+            'circulation_labels' => $measured ? [['text' => 'KEEP CLEAR', 'at' => self::point('CAR', 14, 16), 'angle' => 10], ['text' => 'SHARED APPROACH', 'at' => self::point('CAR', 2.9, 6.7), 'angle' => 20]] : [],
             'dimensions' => self::referenceDimensions(),
             'measurement_basis' => self::measurementBasis($measured),
             'proposed_slot_codes' => array_keys(self::slotPositions($measured)),
@@ -221,13 +220,15 @@ class ParkingMapLayout
         return [
             'survey_verified' => false, 'scale' => $measured ? 'metric_proposal' : 'slot_diagram', 'units_per_metre' => self::UNITS_PER_METRE,
             'source_image' => '/references/dyci-motorcycle-boundary-20261016.png',
+            'lineup_source_image' => '/references/dyci-marked-lineup-20261018.png',
+            'lineup_note' => 'Owner sketch: red = proposed car rows, yellow = motorcycle parcel, green = shared access. The sketch guides row placement; cumulative ruler labels do not replace the supplied metre lengths. Live slot colours continue to mean availability. Some marked perimeter strokes cannot be filled without blocking full-size access frontages.',
             'car_source_image' => '/references/dyci-car-boundary-20261016.png',
             'car_edges_m' => self::CAR_EDGES,
             'note' => $measured ? 'Proposed layout at one scale: 8 drawing units = 1 metre. Motorcycle dimensions are owner-reported. Car edge lengths follow the supplied order, starting at the right edge; angles are estimated from the image, not surveyed. Earlier cumulative map-ruler labels have been removed.' : 'Complete slot map: C-01–C-55 and M-01–M-84. Car bay symbols and aisles are schematic, not to scale. Their diagram positions do not establish physical fit. Use Parking layout for full-size bays and owner-reported boundaries.',
             'motorcycle_proposal' => '84 compact bays: 3 rows × 28, each 1.00 × 2.00 m. Two 1.20 m internal aisles, a 2.56 m connecting end aisle, 0.40 m end margin and 0.20 m side margins. Narrow aisles are a walk/push proposal for compact motorcycles and scooters; actual vehicle sizes and manoeuvring must be checked.',
-            'car_proposal' => $measured ? '32 full-size proposed bays: 12 north-row regular bays, 11 central-row regular bays, 5 western/lower regular bays, 3 parallel bays and existing C-42 accessible. Regular bays are 2.50 × 5.00 m; parallel bays are 2.15 × 6.00 m; C-42 is 4.00 × 5.00 m with a 1.20 m front walkway. Each perpendicular bay retains a 6.00 m access frontage; parallel bays have a proposed 3.60 m access frontage. This is not a maximum-capacity or vehicle swept-path certification. The owner-reported 55-car capacity is retained as the inventory target; 23 codes still have no measured position. The 55-car physical fit has not been established.' : 'All 55 existing car slots are retained as schematic inventory symbols. Diagram symbol sizes are not physical dimensions. Parking layout shows 32 full-size proposed bays; physical fit for all 55 cars remains unverified.',
+            'car_proposal' => $measured ? '32 full-size proposed bays following the owner-marked lineup: 15 north-perimeter regular bays, 13 in interior row A, two parallel bays in interior row B, one lower-perimeter regular bay and C-42 accessible near the shared approach. Regular bays are 2.50 × 5.00 m; parallel bays are 2.15 × 6.00 m; C-42 is 4.00 × 5.00 m with a 1.20 m front walkway. Perpendicular bays retain 6.00 m access frontages; parallel bays have proposed 3.60 m frontages. The western passage stays clear to connect the lower aisle; the accessible frontage is kept wholly within the parcel. This is not a maximum-capacity or vehicle swept-path certification. All 55 car records remain; 23 codes have no measured position. Physical fit for 55 cars has not been established.' : 'All 55 existing car slots are retained as schematic inventory symbols. Diagram sizes are not physical dimensions. Parking layout shows 32 full-size proposed bays based on the marked lineup; physical fit for all 55 cars remains unverified.',
             'vehicle_measurements' => ['car_width_m' => 2.0447, 'car_length_m' => 4.7752, 'car_mirrors_included' => false, 'motorcycle_width_m' => 0.5969, 'motorcycle_length_m' => 1.905, 'note' => 'Owner-measured maximum dimensions. Car width is body-only; mirrors, wheelbase, steering lock and turning envelope are not measured. These figures do not replace bay dimensions.'],
-            'circulation_note' => $measured ? 'The outer parcel is retained. Opposing north and central rows share clear access; parallel bays use narrow western strips. A 3.06 m clear-envelope grid connects every proposed access frontage to the shared approach. This geometric check is not vehicle turning analysis. Confirm mirrors, wheelbase, steering geometry, end manoeuvres, accessibility and the shared junction on site.' : 'This optional inventory diagram uses schematic symbols. It does not represent physical aisle widths or a validated vehicle turning path.',
+            'circulation_note' => $measured ? 'The outer parcel is retained. The north-perimeter and first interior row share a 6.00 m aisle. Two parallel bays form the shorter second interior row. A western passage connects its lower aisle; end manoeuvres remain provisional. A 3.06 m clear-envelope grid connects every proposed access frontage to the shared approach. This geometric check is not vehicle turning analysis. Confirm mirrors, wheelbase, steering geometry, end manoeuvres, accessibility and the shared junction on site.' : 'This optional inventory diagram uses schematic symbols. It does not represent physical aisle widths or a validated vehicle turning path.',
             'inventory' => ['motorcycle_configured' => 84, 'motorcycle_drawn' => 84, 'car_configured' => 55, 'car_drawn' => $measured ? 32 : 55],
             'standards' => [
                 ['type' => 'car', 'label' => 'Car bay', 'width_m' => 2.5, 'length_m' => 5.0, 'basis' => 'Philippine NBCP perpendicular/diagonal bay reference. Six-metre car aisle is a proposed design allowance; turning movements require site validation.', 'source' => 'National Building Code IRR, Rule VII, Section 707(4)(b), Pasig government copy, p. 100', 'url' => 'https://assets.pasigcity.gov.ph/storage/city_ordinance/2024/10/21/67c675622ba621741059426part%201.pdf'],

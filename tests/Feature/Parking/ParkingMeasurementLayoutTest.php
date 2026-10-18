@@ -101,13 +101,15 @@ class ParkingMeasurementLayoutTest extends ParkingTestCase
         $g = ParkingMapLayout::geometry(true);
         $bays = array_filter(ParkingMapLayout::bays(true), fn ($bay) => $bay['area'] === 'CAR');
         $counts = array_count_values(array_column($bays, 'row'));
-        $this->assertSame(12, $counts['North row']);
-        $this->assertSame(11, $counts['Central row']);
-        $this->assertSame(8, $counts['West / lower edge']);
+        $this->assertSame(15, $counts['North perimeter']);
+        $this->assertSame(13, $counts['Interior row A']);
+        $this->assertSame(1, $counts['Perimeter']);
+        $this->assertSame(2, $counts['Interior row B']);
+        $this->assertSame('/references/dyci-marked-lineup-20261018.png', $g['measurement_basis']['lineup_source_image']);
         $this->assertSame(1, $counts['North row / accessible']);
-        $this->assertSame(29, count(array_filter($g['circulation'], fn ($c) => (float) ($c['width_m'] ?? 0) === 6.0)));
-        $this->assertSame(3, count(array_filter($g['circulation'], fn ($c) => $c['kind'] === 'parallel_aisle' && $c['width_m'] === 3.6)));
-        $this->assertSame(['C-24', 'C-28', 'C-29'], array_keys(array_filter(ParkingMapLayout::slotPositions(true), fn ($bay) => $bay['area'] === 'CAR' && $bay['w'] > $bay['h'])));
+        $this->assertSame(30, count(array_filter($g['circulation'], fn ($c) => (float) ($c['width_m'] ?? 0) === 6.0)));
+        $this->assertSame(2, count(array_filter($g['circulation'], fn ($c) => $c['kind'] === 'parallel_aisle' && $c['width_m'] === 3.6)));
+        $this->assertSame(['C-29', 'C-30'], array_keys(array_filter(ParkingMapLayout::slotPositions(true), fn ($bay) => $bay['area'] === 'CAR' && $bay['w'] > $bay['h'])));
         $this->assertSame(55, $g['measurement_basis']['capacity_review']['reported_car_capacity']);
         $this->assertSame(23, $g['measurement_basis']['capacity_review']['unresolved_car_positions']);
         foreach (array_filter($g['circulation'], fn ($c) => in_array($c['kind'], ['car_aisle', 'parallel_aisle', 'walkway'])) as $clearance) {
@@ -136,6 +138,91 @@ class ParkingMeasurementLayoutTest extends ParkingTestCase
         foreach ($bays as $bay) {
             $this->assertFalse($this->overlap($this->corners($bay), $g['connector']['polygon']), 'No bay may block the shared entry/exit connector');
         }
+    }
+
+    public function test_every_car_frontage_connects_to_the_shared_approach_with_a_clear_envelope(): void
+    {
+        $g = ParkingMapLayout::geometry(true);
+        $local = function (array $p): array {
+            $r = deg2rad(10);
+            $x = ($p[0] - 324) / 8;
+            $y = ($p[1] - 30) / 8;
+
+            return [$x * cos($r) + $y * sin($r), -$x * sin($r) + $y * cos($r)];
+        };
+        $parcel = array_map($local, $g['areas'][1]['polygon']);
+        $obstacles = [];
+        foreach (ParkingMapLayout::bays(true) as $bay) {
+            if ($bay['area'] === 'CAR') {
+                $obstacles[] = array_map($local, $this->corners($bay));
+            }
+        }
+        foreach ($g['circulation'] as $c) {
+            if ($c['kind'] === 'walkway') {
+                $obstacles[] = array_map($local, $c['polygon']);
+            }
+        }
+        $bounds = array_map(fn ($poly) => [min(array_column($poly, 0)), max(array_column($poly, 0)), min(array_column($poly, 1)), max(array_column($poly, 1))], $obstacles);
+        // 0.25m grid, with 1.60m edge clearance: a conservative nominal 3.06m
+        // connection check, not a vehicle turning or swept-path calculation.
+        $free = [];
+        foreach (range(-12, 204) as $ix) {
+            foreach (range(-4, 120) as $iy) {
+                $p = [$ix / 4, $iy / 4];
+                if (! $this->inside($p, $parcel) || $this->edgeDistance($p, $parcel) < 1.60) {
+                    continue;
+                }
+                foreach ($obstacles as $i => $obstacle) {
+                    [$left, $right, $top, $bottom] = $bounds[$i];
+                    if ($p[0] < $left - 1.60 || $p[0] > $right + 1.60 || $p[1] < $top - 1.60 || $p[1] > $bottom + 1.60) {
+                        continue;
+                    }
+                    if ($this->inside($p, $obstacle) || $this->edgeDistance($p, $obstacle) < 1.60) {
+                        continue 2;
+                    }
+                }
+                $free["$ix,$iy"] = $p;
+            }
+        }
+        $start = '36,35'; // (9.00m, 8.75m), inside the reserved approach.
+        $this->assertArrayHasKey($start, $free);
+        $queue = [$start];
+        $visited = [$start => $free[$start]];
+        for ($i = 0; $i < count($queue); $i++) {
+            [$ix, $iy] = array_map('intval', explode(',', $queue[$i]));
+            foreach ([[0, 1], [0, -1], [1, 0], [-1, 0]] as [$dx, $dy]) {
+                $key = ($ix + $dx).','.($iy + $dy);
+                if (isset($free[$key]) && ! isset($visited[$key])) {
+                    $visited[$key] = $free[$key];
+                    $queue[] = $key;
+                }
+            }
+        }
+        foreach (array_filter($g['circulation'], fn ($c) => in_array($c['kind'], ['car_aisle', 'parallel_aisle'])) as $i => $frontage) {
+            $polygon = array_map($local, $frontage['polygon']);
+            $connected = false;
+            foreach ($visited as $point) {
+                if ($this->inside($point, $polygon)) {
+                    $connected = true;
+                    break;
+                }
+            }
+            $this->assertTrue($connected, "Car frontage $i must connect to the shared approach");
+        }
+    }
+
+    private function edgeDistance(array $p, array $polygon): float
+    {
+        $distance = INF;
+        foreach ($polygon as $i => $a) {
+            $b = $polygon[($i + 1) % count($polygon)];
+            $dx = $b[0] - $a[0];
+            $dy = $b[1] - $a[1];
+            $t = max(0, min(1, (($p[0] - $a[0]) * $dx + ($p[1] - $a[1]) * $dy) / ($dx * $dx + $dy * $dy)));
+            $distance = min($distance, hypot($p[0] - $a[0] - $t * $dx, $p[1] - $a[1] - $t * $dy));
+        }
+
+        return $distance;
     }
 
     private function distance(array $a, array $b): float
