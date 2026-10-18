@@ -258,4 +258,123 @@ class RegistrationIdTest extends ParkingTestCase
         $this->postJson('/api/registration/id-check',[])->assertStatus(429);
         $this->register($this->withReceipt($this->payload()))->assertCreated();
     }
+    private function verifyRegistration(int $id)
+    {
+        $user=\App\Models\User::findOrFail($id);
+        $code=Notification::sent($user, \App\Notifications\PassEmailVerificationNotification::class)->last()->code;
+        return $this->postJson('/api/email/verify-code',['email'=>$user->email,'code'=>$code]);
+    }
+
+    public function test_matching_college_id_activates_only_after_valid_email_code_and_records_one_automatic_decision(): void
+    {
+        $r=$this->register($this->withReceipt($this->payload()))->assertCreated()->assertJsonPath('user.accountStatus','pending');
+        $id=(int)$r->json('user.id');
+        $this->postJson('/api/email/verify-code',['email'=>'registration-qa@example.test','code'=>'000000'])->assertUnprocessable();
+        $this->assertDatabaseHas('users',['user_id'=>$id,'account_status'=>'pending','email_verified_at'=>null]);
+        $this->verifyRegistration($id)->assertOk()->assertJsonPath('message','Email verified. Your account is active. You can now sign in.');
+        $this->assertDatabaseHas('users',['user_id'=>$id,'account_status'=>'active']);
+        $this->postJson('/api/login',['identifier'=>'202401234','password'=>'Password2026!'])->assertOk()->assertJsonPath('user.accountStatus','active');
+        $this->verifyRegistration($id)->assertUnprocessable();
+        $this->assertSame(1,DB::table('audit_logs')->where('action','account_auto_approved')->where('auditable_id',$id)->count());
+        $this->assertDatabaseMissing('vehicles',['owner_user_id'=>$id]);
+        $this->assertFalse(\App\Models\User::findOrFail($id)->isAdmin());
+    }
+
+    public function test_matching_employee_activates_via_email_code(): void
+    {
+        $e=$this->evidence(['fields'=>['first_name'=>'Juan Miguel','last_name'=>'Dela Cruz','user_code'=>'022-1234']]);
+        $r=$this->register($this->withReceipt($this->payload('employee',['middle_initial'=>'']),$e))->assertCreated();
+        $id=(int)$r->json('user.id');
+        $this->verifyRegistration($id)->assertOk();
+        $this->assertDatabaseHas('users',['user_id'=>$id,'account_status'=>'active','user_type'=>'employee']);
+    }
+
+    public function test_uncertain_disputed_unavailable_and_shs_ids_remain_pending_after_email_verification(): void
+    {
+        $cases=[
+            ['college',[], $this->evidence(['field_confidence'=>['first_name'=>55,'last_name'=>95,'user_code'=>95]])],
+            ['college',['first_name'=>'Juan Manuel','request_manual_review'=>true],$this->evidence()],
+            ['college',[],$this->evidence(['engine_available'=>false])],
+            ['shs',['user_code'=>'SHS-001','department'=>'Senior High School'],null],
+        ];
+        foreach($cases as $i=>[$category,$changes,$e]) {
+            Cache::flush();
+            $payload=$this->payload($category,$changes+['email'=>"review{$i}@example.test",'user_code'=>"20240123{$i}"]);
+            if ($e) $e['fields']['user_code']=$payload['user_code'];
+            $r=$this->register($category==='shs'?$payload:$this->withReceipt($payload,$e))->assertCreated();
+            $id=(int)$r->json('user.id');
+            $this->verifyRegistration($id)->assertOk()->assertJsonPath('message','Email verified. Your ID needs staff review; your account remains pending.');
+            $this->assertDatabaseHas('users',['user_id'=>$id,'account_status'=>'pending']);
+        }
+    }
+
+    public function test_identity_change_legacy_policy_missing_document_or_added_privilege_cannot_auto_activate(): void
+    {
+        foreach(['identity','legacy','file','role','suspended','rejected'] as $i=>$kind) {
+            Cache::flush();
+            $payload=$this->payload(changes:['email'=>"blocked{$i}@example.test",'user_code'=>"20240123{$i}"]);
+            $e=$this->evidence(); $e['fields']['user_code']=$payload['user_code'];
+            $r=$this->register($this->withReceipt($payload,$e))->assertCreated();
+            $id=(int)$r->json('user.id'); $user=\App\Models\User::findOrFail($id); $profile=$user->profile;
+            if($kind==='identity') $profile->forceFill(['last_name'=>'Changed'])->save();
+            if($kind==='legacy') { $result=$profile->school_id_check_result; $result['policy_version']='dyci-id-v1'; $profile->forceFill(['school_id_check_result'=>$result])->save(); }
+            if($kind==='file') Storage::disk('private')->delete($profile->school_id_document_path);
+            if($kind==='role') $user->roles()->attach(DB::table('roles')->where('role_code','admin')->value('role_id'),['assigned_at'=>now()]);
+            if(in_array($kind,['suspended','rejected'])) $user->forceFill(['account_status'=>$kind==='rejected'?'deactivated':'suspended'])->save();
+            $this->verifyRegistration($id)->assertOk();
+            $this->assertNotSame('active',$user->fresh()->account_status,$kind);
+            $this->assertNotNull($user->fresh()->email_verified_at);
+        }
+    }
+
+    public function test_legacy_signed_link_shares_activation_policy_and_replay_does_not_revive_suspended_account(): void
+    {
+        $r=$this->register($this->withReceipt($this->payload()))->assertCreated();
+        $id=(int)$r->json('user.id'); $user=\App\Models\User::findOrFail($id);
+        $url=\Illuminate\Support\Facades\URL::temporarySignedRoute('verification.verify',now()->addMinutes(10),['id'=>$id,'hash'=>sha1($user->email)]);
+        $this->getJson($url)->assertOk();
+        $this->assertSame('active',$user->fresh()->account_status);
+        $user->forceFill(['account_status'=>'suspended'])->save();
+        $this->getJson($url)->assertOk();
+        $this->assertSame('suspended',$user->fresh()->account_status);
+        $this->assertSame(1,DB::table('audit_logs')->where('action','account_auto_approved')->where('auditable_id',$id)->count());
+    }
+
+    public function test_suffix_is_saved_displayed_and_checked_before_automatic_activation(): void
+    {
+        $e=$this->evidence(); $e['fields']['suffix']='Jr.'; $e['field_confidence']['suffix']=95;
+        $r=$this->register($this->withReceipt($this->payload(changes:['suffix'=>'jr']),$e))->assertCreated()->assertJsonPath('user.name','Juan Miguel Dela Cruz Jr.');
+        $id=(int)$r->json('user.id');
+        $this->assertDatabaseHas('user_profiles',['user_id'=>$id,'suffix'=>'Jr.','last_name'=>'Dela Cruz']);
+        $this->verifyRegistration($id)->assertOk();
+        $this->assertSame('active',\App\Models\User::findOrFail($id)->account_status);
+    }
+
+    public function test_missing_or_changed_suffix_cannot_claim_an_automatic_match(): void
+    {
+        $e=$this->evidence(); $e['fields']['suffix']='III'; $e['field_confidence']['suffix']=95;
+        $p=$this->withReceipt($this->payload(changes:['suffix'=>'']),$e);
+        $this->post('/api/registration/id-check',$p,['Accept'=>'application/json'])->assertOk()->assertJsonPath('data.checks.suffix.result','fail');
+        $this->register($p)->assertUnprocessable()->assertJsonValidationErrors('school_id_file');
+        $p['request_manual_review']=true;
+        $r=$this->register($p)->assertCreated()->assertJsonPath('user.accountStatus','pending');
+        $this->verifyRegistration((int)$r->json('user.id'))->assertOk();
+        $this->assertDatabaseHas('users',['user_id'=>(int)$r->json('user.id'),'account_status'=>'pending']);
+    }
+
+    public function test_unread_suffix_and_conflicting_number_reads_require_review_without_lowering_threshold(): void
+    {
+        $e=$this->evidence(['field_conflicts'=>['user_code'=>true]]);
+        $r=$this->register($this->withReceipt($this->payload(changes:['suffix'=>'Jr.']),$e))->assertCreated()->assertJsonPath('id_check.status','manual_review')->assertJsonPath('id_check.checks.user_code.result','uncertain')->assertJsonPath('id_check.checks.suffix.result','uncertain');
+        $this->verifyRegistration((int)$r->json('user.id'))->assertOk();
+        $this->assertDatabaseHas('users',['user_id'=>(int)$r->json('user.id'),'account_status'=>'pending']);
+    }
+
+    public function test_explicit_staff_review_request_stays_pending_even_if_details_match(): void
+    {
+        $r=$this->register($this->withReceipt($this->payload(changes:['request_manual_review'=>true])))->assertCreated()->assertJsonPath('id_check.status','manual_review')->assertJsonPath('id_check.automatic_status','matched');
+        $this->verifyRegistration((int)$r->json('user.id'))->assertOk();
+        $this->assertDatabaseHas('users',['user_id'=>(int)$r->json('user.id'),'account_status'=>'pending']);
+    }
+
 }

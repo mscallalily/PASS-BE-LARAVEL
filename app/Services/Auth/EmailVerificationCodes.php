@@ -50,7 +50,7 @@ class EmailVerificationCodes
                 DB::table('email_verification_codes')->where('user_id', $user->getKey())->increment('attempts');
                 return null;
             }
-            $user->markEmailAsVerified();
+            $user = app(\App\Services\Registration\RegistrationActivation::class)->complete($user);
             DB::table('email_verification_codes')->where('user_id', $user->getKey())->delete();
             return $user;
         });

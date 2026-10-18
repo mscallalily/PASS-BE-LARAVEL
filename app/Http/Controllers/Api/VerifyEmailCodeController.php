@@ -16,6 +16,6 @@ class VerifyEmailCodeController extends Controller
         if (!$user) return response()->json(['message' => 'Invalid or expired code. After 5 incorrect attempts, request a new code.'], 422);
         return response()->json(['message' => $user->isGuest()
             ? 'Email verified. You can now sign in and submit a visitor request. A QR pass requires approval.'
-            : ($user->account_status === 'pending' ? 'Email verified. Your account is still pending administrator approval.' : 'Email verified. You can now try signing in.')]);
+            : ($user->account_status === 'pending' ? 'Email verified. Your ID needs staff review; your account remains pending.' : ($user->account_status === 'active' ? 'Email verified. Your account is active. You can now sign in.' : 'Email verified. Your account is not active. Contact PASS staff.'))]);
     }
 }

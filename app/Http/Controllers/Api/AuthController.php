@@ -27,6 +27,7 @@ class AuthController extends Controller
             'registration_category' => ['required', Rule::in(\App\Services\Registration\InstitutionalIdRules::CATEGORIES)],
             'first_name' => ['required', 'string', 'max:100', "regex:/^[\\pL\\pM][\\pL\\pM .'-]*$/u"],
             'last_name' => ['required', 'string', 'max:100', "regex:/^[\\pL\\pM][\\pL\\pM .'-]*$/u"],
+            'suffix' => ['nullable', 'string', 'regex:/^(?:Jr\.?|Sr\.?|I|II|III|IV|V|VI|VII|VIII|IX|X)$/i'],
             'middle_initial' => ['nullable', 'string', 'regex:/^\pL\.?$/u'],
             'user_code' => ['required', 'string', 'max:50', function ($attr, $value, $fail) use ($category) {
                 if (in_array($category, \App\Services\Registration\InstitutionalIdRules::CATEGORIES, true)
@@ -67,6 +68,8 @@ class AuthController extends Controller
         if ($check['status'] === 'needs_correction') {
             throw \Illuminate\Validation\ValidationException::withMessages(['school_id_file' => implode(' ', $check['reasons'])]);
         }
+        $check['activation_policy'] = 'matched-id-and-email-v1';
+        $check['identity_hash'] = \App\Services\Registration\RegistrationActivation::identity($category, $number, $data['first_name'], $data['last_name'], $data['middle_initial'] ?? '', $data['suffix'] ?? '');
         $path = $file->store('school-ids', 'private');
         if (!$path) return response()->json(['message' => 'The ID could not be stored. Please try again.'], 500);
         try {
@@ -77,6 +80,7 @@ class AuthController extends Controller
                     'department_id' => $department?->department_id, 'registration_category' => $data['registration_category'], 'registration_unit' => $unit,
                     'first_name' => trim($data['first_name']), 'last_name' => trim($data['last_name']),
                     'middle_name' => empty($data['middle_initial']) ? null : mb_strtoupper(rtrim($data['middle_initial'], '.')).'.',
+                    'suffix' => \App\Services\Registration\InstitutionalIdRules::suffix($data['suffix'] ?? '') ?: null,
                     'contact_number' => trim($data['contact_number']), 'school_id_document_path' => $path,
                     'school_id_check_status' => $check['status'], 'school_id_check_result' => $check,
                 ]);
@@ -99,7 +103,7 @@ class AuthController extends Controller
         try { app(\App\Services\Auth\EmailVerificationCodes::class)->send($user); $sent = true; }
         catch (Throwable $error) { report($error); }
         return response()->json([
-            'message' => $sent ? 'Registration saved. Enter the email verification code. Your account is pending administrator approval.' : 'Registration saved, but the verification email could not be sent. Use Send / resend code to try again.',
+            'message' => $sent ? 'Registration saved. Verify your email next. Matching IDs activate automatically; uncertain checks require staff review.' : 'Registration saved, but the verification email could not be sent. Use Send / resend code to try again.',
             'email_verification_sent' => $sent, 'id_check' => $check, 'user' => $this->userPayload($user),
         ], 201);
     }
@@ -219,7 +223,7 @@ class AuthController extends Controller
             'id' => (string) $user->user_id,
             'name' => trim(
                 ($profile->first_name ?? '') . ' ' .
-                ($profile->last_name ?? '')
+                ($profile->last_name ?? '') . ' ' . ($profile->suffix ?? '')
             ),
             'email' => $user->email,
             'role' => $user->roles->first()?->role_code,

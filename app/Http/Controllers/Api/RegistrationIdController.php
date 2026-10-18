@@ -26,6 +26,7 @@ class RegistrationIdController extends Controller
             'id_check_receipt' => ['nullable', 'string', 'max:30000'],
             'request_manual_review' => ['sometimes', 'boolean'],
             'first_name' => ['nullable', 'string', 'max:100'], 'last_name' => ['nullable', 'string', 'max:100'],
+            'suffix' => ['nullable', 'string', 'max:10'],
             'middle_initial' => ['nullable', 'string', 'max:3'], 'user_code' => ['nullable', 'string', 'max:50'],
         ]);
         $file = $request->file('school_id_file');
@@ -47,8 +48,8 @@ class RegistrationIdController extends Controller
             $receipt = $receipts->issue($file, $category, $evidence);
         }
         $submitted = [];
-        foreach (['first_name', 'last_name', 'middle_initial', 'user_code'] as $key) {
-            $submitted[$key] = trim($data[$key] ?? '') ?: ($evidence['fields'][$key] ?? '');
+        foreach (['first_name', 'last_name', 'middle_initial', 'suffix', 'user_code'] as $key) {
+            $submitted[$key] = array_key_exists($key, $data) ? trim($data[$key] ?? '') : ($evidence['fields'][$key] ?? '');
         }
         $result = $rules->requestManualReview($rules->evaluate($category, $evidence, $submitted), $request->boolean('request_manual_review'));
 

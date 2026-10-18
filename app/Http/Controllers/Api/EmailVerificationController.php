@@ -35,12 +35,12 @@ class EmailVerificationController extends Controller
             ]);
         }
 
-        $user->markEmailAsVerified();
+        $user = app(\App\Services\Registration\RegistrationActivation::class)->complete($user);
 
         return response()->json([
             'message' => $user->isGuest()
                 ? 'Email verified successfully. You can now sign in and submit a visitor parking request. A QR pass requires request approval.'
-                : 'Email verified successfully. Your account is still pending administrator approval.',
+                : ($user->account_status === 'pending' ? 'Email verified. Your ID needs staff review; your account remains pending.' : ($user->account_status === 'active' ? 'Email verified. Your account is active. You can now sign in.' : 'Email verified. Your account is not active. Contact PASS staff.')),
         ]);
     }
 }

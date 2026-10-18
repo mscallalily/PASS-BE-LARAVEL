@@ -20,7 +20,7 @@ class InstitutionalIdReader
             'kind' => 'image', 'engine_available' => $full['engine_available'],
             'confidence' => $full['confidence'], 'width' => $full['width'], 'height' => $full['height'], 'sharpness' => $full['sharpness'],
             'school_marker' => str_contains($compact, 'DYCIEDUPH') || (str_contains($compact, 'YANGA') && str_contains($compact, 'COLLEG')),
-            'fields' => [], 'field_confidence' => [],
+            'fields' => [], 'field_confidence' => [], 'field_conflicts' => [],
         ];
         if (! $full['engine_available']) {
             return $evidence;
@@ -42,8 +42,8 @@ class InstitutionalIdReader
             }
         }
         $boxes = $category === 'employee'
-            ? ['first_name' => [.52, .24, .98, .305], 'last_name' => [.52, .29, .98, .355], 'user_code' => [.59, .86, .98, .91], 'school' => [.5, .95, .99, .995]]
-            : ['first_name' => [.22, .787, .85, .838], 'last_name' => [.1, .728, .98, .78], 'user_code' => [.23, .681, .8, .715], 'school' => [.25, .215, .75, .242]];
+            ? ['first_name' => [.52, .24, .98, .305], 'last_name' => [.40, .29, .995, .355], 'user_code' => [.59, .86, .98, .91], 'school' => [.5, .95, .99, .995]]
+            : ['first_name' => [.015, .787, .995, .838], 'last_name' => [.015, .72, .995, .785], 'user_code' => [.23, .681, .8, .715], 'school' => [.25, .215, .75, .242]];
         try {
             foreach ($boxes as $key => [$left, $top, $right, $bottom]) {
                 $crop = imagecrop($image, ['x' => (int) ($left * imagesx($image)), 'y' => (int) ($top * imagesy($image)),
@@ -75,6 +75,35 @@ class InstitutionalIdReader
                         $reads[] = $this->reader->readTextImage($temp, 6);
                         $reads[] = $this->reader->readTextImage($temp, 7);
                     }
+                    if ($key === 'user_code') {
+                        // Number-only color crop avoids label/barcode interference and
+                        // preserves colored ink/background separation lost in grayscale.
+                        $numberBox = $category === 'employee' ? [.79, .867, .965, .895] : [.49, .683, .78, .713];
+                        [$nl, $nt, $nr, $nb] = $numberBox;
+                        $numberCrop = imagecrop($image, ['x' => (int) ($nl * imagesx($image)), 'y' => (int) ($nt * imagesy($image)),
+                            'width' => max(1, (int) ($nr * imagesx($image)) - (int) ($nl * imagesx($image))), 'height' => max(1, (int) ($nb * imagesy($image)) - (int) ($nt * imagesy($image)))]);
+                        if ($numberCrop) {
+                            $color = imagescale($numberCrop, 1200, -1, IMG_BILINEAR_FIXED);
+                            imagedestroy($numberCrop);
+                            $padded = imagecreatetruecolor(imagesx($color) + 40, imagesy($color) + 40);
+                            imagefill($padded, 0, 0, imagecolorallocate($padded, 255, 255, 255));
+                            imagecopy($padded, $color, 20, 20, 0, 0, imagesx($color), imagesy($color));
+                            imagedestroy($color);
+                            imagepng($padded, $temp);
+                            imagedestroy($padded);
+                            $numberRead = $this->reader->readTextImage($temp, 7);
+                            $broadNumbers = array_values(array_unique(array_merge(...array_map(fn ($r) => self::numbers($r['text'] ?? '', $category), $reads))));
+                            $narrowNumbers = self::numbers($numberRead['text'] ?? '', $category);
+                            // Tight crops may clip digits. Boost only when a broader
+                            // read independently contains the same complete number.
+                            if (count($narrowNumbers) !== 1 || !in_array($narrowNumbers[0], $broadNumbers, true)) {
+                                $numberRead['confidence'] = min(79, $numberRead['confidence'] ?? 0);
+                                foreach ($numberRead['words'] ?? [] as $i => $word) $numberRead['words'][$i]['confidence'] = min(79, $word['confidence']);
+                            }
+                            $reads[] = $numberRead;
+                        }
+                        $evidence['field_conflicts'][$key] = $this->numberConflict($reads, $category);
+                    }
                     usort($reads, fn ($a, $b) => $this->fieldConfidence($b, $key, $category) <=> $this->fieldConfidence($a, $key, $category));
                     $read = $reads[0];
                     $read['confidence'] = $this->fieldConfidence($read, $key, $category);
@@ -102,14 +131,17 @@ class InstitutionalIdReader
                         $evidence['fields'][$key] = InstitutionalIdRules::format($category, $candidates[0]);
                     }
                 } else {
-                    $text = trim(preg_replace('/[^\pL\pM .\'-]/u', '', $text), " .-\t\r\n");
-                    if ($text !== '' && mb_strlen($text) <= 100 && count(preg_split('/\s+/', $text)) <= 6
+                    $text = trim(preg_replace('/[^\pL\pM ,.\'-]/u', '', $text), " .-\t\r\n");
+                    if ($text !== '' && mb_strlen($text) <= 100 && count(preg_split('/\s+/', $text)) <= 12
                         && ! preg_match('/COLLEGE|STUDENT|DEPARTMENT|LICENSE|MAINTENANCE|OFFICER|SERVICES|MAGIS/i', $text)) {
-                        if ($key === 'first_name' && preg_match('/^(.*?)\s+([\pL])\.?$/u', $text, $m)) {
-                            $evidence['fields']['middle_initial'] = mb_strtoupper($m[2]).'.';
-                            $text = trim($m[1]);
+                        $parts = self::nameFields($text, $key);
+                        if (isset($parts['suffix'])) {
+                            if (isset($evidence['fields']['suffix']) && $evidence['fields']['suffix'] !== $parts['suffix']) {
+                                $evidence['field_conflicts']['suffix'] = true;
+                            }
+                            $evidence['field_confidence']['suffix'] = min($evidence['field_confidence']['suffix'] ?? 100, $read['confidence'] ?? 0);
                         }
-                        $evidence['fields'][$key] = $text;
+                        $evidence['fields'] = array_replace($evidence['fields'], $parts);
                     }
                 }
                 $evidence['field_confidence'][$key] = $read['confidence'] ?? 0;
@@ -119,6 +151,36 @@ class InstitutionalIdReader
         }
 
         return $evidence;
+    }
+
+    /** Keep suffix and initial separate without splitting compound surnames. */
+    public static function nameFields(string $text, string $key): array
+    {
+        $text = trim(preg_replace('/\s+/u', ' ', $text));
+        $fields = [];
+        $suffixPattern = $key === 'last_name' ? 'JR|SR|VIII|VII|III|VI|IV|II|IX|X|V|I' : 'JR|SR|VIII|VII|III|VI|IV|II|IX';
+        if (preg_match('/^(.*?)\s*,?\s+('.$suffixPattern.')\.?$/iu', $text, $m) && trim($m[1]) !== '') {
+            $fields['suffix'] = InstitutionalIdRules::suffix($m[2]);
+            $text = rtrim(trim($m[1]), ',');
+        }
+        if ($key === 'first_name' && preg_match('/^(.*?)\s+([\pL])\.?$/u', $text, $m)) {
+            $fields['middle_initial'] = mb_strtoupper($m[2]).'.';
+            $text = trim($m[1]);
+        }
+        $fields[$key] = $text;
+        return $fields;
+    }
+
+    /** Conflicting strong reads must go to review, never select by the submitted ID. */
+    public function numberConflict(array $reads, string $category): bool
+    {
+        $strong = [];
+        foreach ($reads as $read) {
+            if ($this->fieldConfidence($read, 'user_code', $category) >= 80) {
+                $strong = array_merge($strong, self::numbers($read['text'] ?? '', $category));
+            }
+        }
+        return count(array_unique($strong)) > 1;
     }
 
     private function fieldConfidence(array $read, string $key, string $category): float

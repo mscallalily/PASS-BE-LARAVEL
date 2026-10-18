@@ -77,7 +77,7 @@ class UserManagementController extends Controller
                 'id' => (string) $user->user_id,
                 'name' => trim(
                     ($profile?->first_name ?? '') . ' ' .
-                    ($profile?->last_name ?? '')
+                    ($profile?->last_name ?? '') . ' ' . ($profile?->suffix ?? '')
                 ),
                 'email' => $user->email,
                 'idNum' => $user->user_code,

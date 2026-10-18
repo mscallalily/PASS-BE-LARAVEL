@@ -7,7 +7,7 @@ use App\Support\CampusTime;
 /** Document consistency only; no student/employment roster or issuer integration. */
 class InstitutionalIdRules
 {
-    public const POLICY = 'dyci-id-v1';
+    public const POLICY = 'dyci-id-v2';
 
     public const CATEGORIES = ['college', 'employee', 'shs'];
 
@@ -46,6 +46,12 @@ class InstitutionalIdRules
         return substr($n, 0, $cut).'-'.substr($n, $cut);
     }
 
+    public static function suffix(?string $value): string
+    {
+        $value = strtoupper(rtrim(trim($value ?? ''), '.'));
+        return match ($value) { 'JR' => 'Jr.', 'SR' => 'Sr.', default => $value };
+    }
+
     public static function name(string $value): string
     {
         $value = strtr(mb_strtoupper(trim($value), 'UTF-8'), ['Ñ' => 'N']);
@@ -82,7 +88,7 @@ class InstitutionalIdRules
         $suggestions = $evidence['fields'] ?? [];
         foreach (['user_code' => 'ID number', 'first_name' => 'First name', 'last_name' => 'Surname'] as $key => $label) {
             $read = $suggestions[$key] ?? '';
-            $strong = ($evidence['field_confidence'][$key] ?? 0) >= 80;
+            $strong = ($evidence['field_confidence'][$key] ?? 0) >= 80 && empty($evidence['field_conflicts'][$key]);
             $a = $key === 'user_code' ? self::digits($read) : trim(self::name($read));
             $b = $key === 'user_code' ? self::digits($submitted[$key]) : trim(self::name($submitted[$key]));
             $match = $a !== '' && $a === $b;
@@ -93,12 +99,21 @@ class InstitutionalIdRules
             }
         }
         // Middle initial is optional. Never expand an initial into a guessed middle name.
-        if (! empty($submitted['middle_initial']) && ! empty($suggestions['middle_initial']) && ($evidence['field_confidence']['first_name'] ?? 0) >= 80) {
-            $match = trim(self::name($submitted['middle_initial'])) === trim(self::name($suggestions['middle_initial']));
-            $checks['middle_initial'] = ['result' => $match ? 'pass' : 'fail', 'detail' => $match ? 'Middle initial matches.' : 'Middle initial differs from the document.'];
-            if (! $match) {
+        if (! empty($submitted['middle_initial'])) {
+            $match = trim(self::name($submitted['middle_initial'])) === trim(self::name($suggestions['middle_initial'] ?? ''));
+            $strong = !empty($suggestions['middle_initial']) && ($evidence['field_confidence']['first_name'] ?? 0) >= 80;
+            $checks['middle_initial'] = ['result' => !$strong ? 'uncertain' : ($match ? 'pass' : 'fail'), 'detail' => !$strong ? 'Middle initial could not be confirmed; staff review is needed.' : ($match ? 'Middle initial matches.' : 'Middle initial differs from the document.')];
+            if ($strong && ! $match) {
                 $reasons[] = 'Check your middle initial against the ID, or leave it blank if unavailable.';
             }
+        }
+        $suffixRead = self::suffix($suggestions['suffix'] ?? '');
+        $suffixEntered = self::suffix($submitted['suffix'] ?? '');
+        if ($suffixRead !== '' || $suffixEntered !== '') {
+            $strong = $suffixRead !== '' && ($evidence['field_confidence']['suffix'] ?? 0) >= 80 && empty($evidence['field_conflicts']['suffix']);
+            $state = !$strong ? 'uncertain' : ($suffixRead === $suffixEntered ? 'pass' : 'fail');
+            $checks['suffix'] = ['result' => $state, 'detail' => $state === 'pass' ? 'Name suffix matches.' : ($state === 'fail' ? 'Name suffix differs from the document.' : 'Suffix could not be confirmed; staff review is needed.')];
+            if ($state === 'fail') $reasons[] = 'Check the name suffix printed on your ID.';
         }
         if ($reasons) {
             return $this->result('needs_correction', $checks, $reasons);
@@ -111,8 +126,8 @@ class InstitutionalIdRules
     /** A disputed OCR reading may be sent to staff; it never becomes a match. */
     public function requestManualReview(array $result, bool $requested): array
     {
-        if ($requested && $result['status'] === 'needs_correction' && ($result['checks']['id_format']['result'] ?? '') === 'pass') {
-            $result['automatic_status'] = 'needs_correction';
+        if ($requested && ($result['checks']['id_format']['result'] ?? '') === 'pass') {
+            $result['automatic_status'] = $result['status'];
             $result['status'] = 'manual_review';
             $result['manual_review_requested'] = true;
             array_unshift($result['reasons'], 'The registrant disputes the OCR reading and requested staff review. Inspect the ID and corrected details before account approval.');
@@ -123,6 +138,6 @@ class InstitutionalIdRules
     private function result(string $status, array $checks, array $reasons): array
     {
         return ['status' => $status, 'checks' => $checks, 'reasons' => array_values(array_unique($reasons)), 'policy_version' => self::POLICY,
-            'note' => 'Document text checks do not confirm current enrollment/employment or ID authenticity. Email verification and account approval are separate.'];
+            'note' => 'Document text checks do not confirm current enrollment/employment or ID authenticity. A matched ID check becomes eligible for account activation after email verification; uncertain checks require staff review.'];
     }
 }
