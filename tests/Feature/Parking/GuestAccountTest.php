@@ -390,6 +390,7 @@ class GuestAccountTest extends ParkingTestCase
 
         $this->travel(2)->days();
         $this->postJson("/api/visitors/requests/{$late}/approve", ['documents_reviewed' => true])->assertStatus(409);
+        $this->actingAsStaff();
         $r = $this->gate('entry', ['qr_pass_code' => $pass['pass_code']]);
         $this->assertSame('denied', $r['status']);
         $this->assertSame('Visitor QR pass has expired.', $r['reason']);

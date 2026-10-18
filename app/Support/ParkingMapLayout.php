@@ -229,7 +229,7 @@ class ParkingMapLayout
             $number = $edge === 8 ? 6 : $edge + 1;
             $dimensions[] = ['id' => 'C'.$number, 'text' => number_format(self::CAR_EDGES[$number - 1], 2).' m', 'description' => 'Car boundary '.$number.' (owner-numbered)', 'at' => self::point('CAR', ...$at), 'angle' => 0, 'from' => self::point('CAR', ...self::CAR_POINTS[$edge]), 'to' => self::point('CAR', ...self::CAR_POINTS[($edge + 1) % 9])];
         }
-        $dimensions[] = ['id' => 'PINK-TOP', 'text' => '3.36 m', 'description' => 'Upper pink junction (oblique reference)', 'at' => self::point('CAR', -7, 2), 'angle' => 0];
+        $dimensions[] = ['id' => 'upper-junction', 'label' => 'Upper junction', 'text' => '3.36 m', 'description' => 'Upper pink junction (oblique reference)', 'at' => self::point('CAR', -7, 2), 'angle' => 0];
         $dimensions[] = ['id' => 'C3', 'text' => '2.60 m', 'description' => 'Car boundary 3 / lower pink segment (owner-corrected)', 'at' => self::point('CAR', 47, 25), 'angle' => 0];
 
         return $dimensions;
@@ -275,9 +275,9 @@ class ParkingMapLayout
     public static function ambiguities(): array
     {
         return [
-            self::measurementBasis()['motorcycle_proposal'], self::measurementBasis()['car_proposal'],
+            self::measurementBasis(true)['motorcycle_proposal'], self::measurementBasis(true)['car_proposal'],
             'Car perimeter bearings are assumed. Lengths alone do not determine the actual parcel shape or prove capacity. All map placements are proposals, not as-built positions.',
-            'The default measured proposal draws 45 cars and 84 motorcycles. All 139 inventory records remain in the optional Inventory diagram. A physical fit for 55 cars is unverified; capacity and operating rules are unchanged.',
+            'The default measured proposal draws 45 cars and 84 motorcycles. All 139 inventory records remain in the database; unpositioned codes are retained without invented bay positions. A physical fit for 55 cars is unverified; capacity and operating rules are unchanged.',
         ];
     }
 

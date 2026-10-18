@@ -61,6 +61,7 @@ class RfidAssignmentTest extends ParkingTestCase
         $this->patchJson('/api/rfid/assignments/'.$assignment->assignment_id.'/revoke')->assertOk();
         $this->assertDatabaseHas('rfid_assignments', ['assignment_id' => $assignment->assignment_id, 'assignment_status' => 'revoked']);
         $this->assertDatabaseHas('rfid_tags', ['tag_uid' => $vehicle['tag'], 'tag_status' => 'deactivated']);
+        $this->actingAsStaff();
         $this->postJson('/api/parking/entry', ['rfid_tag_uid' => $vehicle['tag']])->assertJsonPath('status', 'denied');
         $this->assertDatabaseCount('parking_transactions', 0);
     }

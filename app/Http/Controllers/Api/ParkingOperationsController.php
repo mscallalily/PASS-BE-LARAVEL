@@ -30,6 +30,16 @@ class ParkingOperationsController extends Controller
             : response()->json(['message' => 'Only Parking Staff and administrators can access parking operations.'], 403);
     }
 
+    /** Day-to-day layout mutations belong to Parking Staff; admins monitor only. */
+    private function operationForbidden(Request $request): ?JsonResponse
+    {
+        $user = $request->user();
+
+        return $user->canManageParking() && ! $user->isAdmin()
+            ? null
+            : response()->json(['message' => 'Only Parking Staff can record gate movements or update parking slots. Administrators have read-only parking access.'], 403);
+    }
+
     /** Database datetimes are stored in the application timezone; send them with an offset. */
     public static function iso(?string $value): ?string
     {
@@ -287,7 +297,7 @@ class ParkingOperationsController extends Controller
     /** Mark a slot as under maintenance or return it to service. */
     public function updateSlot(Request $request, int $slotId): JsonResponse
     {
-        if ($denied = $this->forbidden($request)) {
+        if ($denied = $this->operationForbidden($request)) {
             return $denied;
         }
 
@@ -457,7 +467,7 @@ class ParkingOperationsController extends Controller
      */
     private function gate(Request $request, string $direction): JsonResponse
     {
-        if ($denied = $this->forbidden($request)) {
+        if ($denied = $this->operationForbidden($request)) {
             return $denied;
         }
 
@@ -485,7 +495,7 @@ class ParkingOperationsController extends Controller
      */
     public function observedSlot(Request $request, int $transactionId): JsonResponse
     {
-        if ($denied = $this->forbidden($request)) {
+        if ($denied = $this->operationForbidden($request)) {
             return $denied;
         }
 

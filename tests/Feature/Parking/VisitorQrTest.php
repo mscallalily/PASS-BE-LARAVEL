@@ -82,6 +82,7 @@ class VisitorQrTest extends ParkingTestCase
         $this->actingAsAdmin();
         $pass = $this->approvedPass();
         $vehicleId = DB::table('qr_passes')->where('qr_pass_id', $pass['qr_pass_id'])->value('vehicle_id');
+        $this->actingAsStaff();
 
         $in = $this->gate('entry', ['qr_pass_code' => $pass['pass_code']]);
 
@@ -121,6 +122,7 @@ class VisitorQrTest extends ParkingTestCase
         $pass = $this->approvedPass();
 
         $this->postJson("/api/visitors/passes/{$pass['qr_pass_id']}/revoke", ['reason' => 'Visit cancelled'])->assertOk();
+        $this->actingAsStaff();
         $r = $this->gate('entry', ['qr_pass_code' => $pass['pass_code']]);
 
         $this->assertSame('denied', $r['status']);
@@ -133,6 +135,7 @@ class VisitorQrTest extends ParkingTestCase
         $pass = $this->approvedPass();
 
         $this->travel(5)->hours();
+        $this->actingAsStaff();
         $r = $this->gate('entry', ['qr_pass_code' => $pass['pass_code']]);
 
         $this->assertSame('denied', $r['status']);
@@ -142,7 +145,7 @@ class VisitorQrTest extends ParkingTestCase
 
     public function test_legacy_pass_without_an_approved_request_cannot_enter_but_can_exit(): void
     {
-        $this->actingAsAdmin();
+        $this->actingAsStaff();
         $visitor = $this->visitorVehicle();
         $legacy = $this->rawPass(['visitor_id' => $visitor['visitor_id'], 'vehicle_id' => $visitor['vehicle_id']]);
 
