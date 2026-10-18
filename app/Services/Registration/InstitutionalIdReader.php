@@ -51,6 +51,7 @@ class InstitutionalIdReader
                 if (! $crop) {
                     continue;
                 }
+                $nameColor = in_array($key, ['first_name', 'last_name'], true) ? imagescale($crop, 1000, -1, IMG_BILINEAR_FIXED) : null;
                 $scaled = imagescale($crop, 1600, -1, IMG_BICUBIC);
                 imagedestroy($crop);
                 $canvas = imagecreatetruecolor(imagesx($scaled) + 40, imagesy($scaled) + 40);
@@ -73,6 +74,16 @@ class InstitutionalIdReader
                         }
                         imagepng($canvas, $temp);
                         $reads[] = $this->reader->readTextImage($temp, 6);
+                        $reads[] = $this->reader->readTextImage($temp, 7);
+                    }
+                    if ($nameColor && max(array_map(fn ($r) => $this->fieldConfidence($r, $key, $category), $reads)) < 90) {
+                        // Keep colored lettering/background information and try a
+                        // different scale; never raise the stored OCR confidence.
+                        $namePadded = imagecreatetruecolor(imagesx($nameColor) + 40, imagesy($nameColor) + 40);
+                        imagefill($namePadded, 0, 0, imagecolorallocate($namePadded, 255, 255, 255));
+                        imagecopy($namePadded, $nameColor, 20, 20, 0, 0, imagesx($nameColor), imagesy($nameColor));
+                        imagepng($namePadded, $temp);
+                        imagedestroy($namePadded);
                         $reads[] = $this->reader->readTextImage($temp, 7);
                     }
                     if ($key === 'user_code') {
@@ -118,6 +129,7 @@ class InstitutionalIdReader
                 } finally {
                     @unlink($temp);
                     imagedestroy($canvas);
+                    if ($nameColor) imagedestroy($nameColor);
                 }
                 $text = trim($read['text'] ?? '');
                 if ($key === 'user_code') {

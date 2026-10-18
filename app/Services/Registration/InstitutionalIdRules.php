@@ -78,7 +78,8 @@ class InstitutionalIdRules
             return $this->result('manual_review', $checks, ['Upload a JPG/PNG for automatic reading, or submit this document for staff review.']);
         }
         $quality = ($evidence['width'] ?? 0) >= 500 && ($evidence['height'] ?? 0) >= 300 && ($evidence['sharpness'] ?? 0) >= 60;
-        $checks['image_quality'] = ['result' => $quality ? 'pass' : 'uncertain', 'detail' => $quality ? 'Image size and sharpness checks passed.' : 'Image quality is uncertain; a clearer photo or staff review is needed.'];
+        $qualityDetail = sprintf('%d × %d px; sharpness %.1f. Minimum: 500 × 300 px and sharpness 60.', $evidence['width'] ?? 0, $evidence['height'] ?? 0, $evidence['sharpness'] ?? 0);
+        $checks['image_quality'] = ['result' => $quality ? 'pass' : 'uncertain', 'detail' => ($quality ? 'Image quality passed. ' : 'Image quality needs review. ').$qualityDetail];
         $school = $evidence['school_marker'] ?? false;
         $checks['school'] = ['result' => $school ? 'pass' : 'uncertain', 'detail' => $school ? 'DYCI text was found on the document.' : 'DYCI text could not be confirmed.'];
         if (! $school && ($evidence['confidence'] ?? 0) >= 80) {
@@ -93,7 +94,11 @@ class InstitutionalIdRules
             $b = $key === 'user_code' ? self::digits($submitted[$key]) : trim(self::name($submitted[$key]));
             $match = $a !== '' && $a === $b;
             $state = ! $strong || $a === '' ? 'uncertain' : ($match ? 'pass' : 'fail');
-            $checks[$key] = ['result' => $state, 'detail' => $state === 'pass' ? "{$label} matches the document text." : ($state === 'fail' ? "{$label} differs from the document text." : "{$label} could not be read confidently; staff review is needed.")];
+            $confidence = (float) ($evidence['field_confidence'][$key] ?? 0);
+            $uncertain = !empty($evidence['field_conflicts'][$key]) ? "{$label}: the OCR reads disagree; staff review is needed."
+                : ($a === '' ? "{$label}: no complete value could be extracted; staff review is needed."
+                : sprintf('%s: text was extracted, but OCR confidence is %.1f%% (minimum 80%%). Staff review is needed.', $label, $confidence));
+            $checks[$key] = ['result' => $state, 'detail' => $state === 'pass' ? "{$label} matches the document text." : ($state === 'fail' ? "{$label} differs from the document text." : $uncertain)];
             if ($state === 'fail') {
                 $reasons[] = "{$label} does not match the uploaded ID. Review your entry or upload a clearer photo.";
             }
@@ -120,7 +125,8 @@ class InstitutionalIdRules
         }
         $allPass = collect($checks)->every(fn ($c) => $c['result'] === 'pass');
 
-        return $this->result($allPass ? 'matched' : 'manual_review', $checks, $allPass ? [] : ['Some details could not be confirmed automatically. PASS staff must review the uploaded ID.']);
+        $uncertainDetails = array_column(array_filter($checks, fn ($c) => $c['result'] === 'uncertain'), 'detail');
+        return $this->result($allPass ? 'matched' : 'manual_review', $checks, $allPass ? [] : $uncertainDetails);
     }
 
     /** A disputed OCR reading may be sent to staff; it never becomes a match. */

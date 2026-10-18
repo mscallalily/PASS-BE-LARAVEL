@@ -377,4 +377,23 @@ class RegistrationIdTest extends ParkingTestCase
         $this->assertDatabaseHas('users',['user_id'=>(int)$r->json('user.id'),'account_status'=>'pending']);
     }
 
+    public function test_review_reasons_identify_the_exact_uncertain_checks_and_measured_values(): void
+    {
+        $e=$this->evidence(['sharpness'=>40,'school_marker'=>false,'confidence'=>50,'field_confidence'=>['first_name'=>77.2,'last_name'=>95,'user_code'=>95]]);
+        $data=$this->withReceipt($this->payload(),$e);
+        $r=$this->post('/api/registration/id-check',$data,['Accept'=>'application/json'])->assertOk()->assertJsonPath('data.status','manual_review');
+        $this->assertStringContainsString('77.2%', $r->json('data.checks.first_name.detail'));
+        $this->assertStringContainsString('40.0', $r->json('data.checks.image_quality.detail'));
+        $this->assertContains($r->json('data.checks.first_name.detail'),$r->json('data.reasons'));
+        $this->assertContains($r->json('data.checks.image_quality.detail'),$r->json('data.reasons'));
+        $this->assertContains($r->json('data.checks.school.detail'),$r->json('data.reasons'));
+        $this->assertStringNotContainsString('could not be confirmed automatically',implode(' ',$r->json('data.reasons')));
+    }
+
+    public function test_low_full_card_ocr_confidence_does_not_block_strong_matching_fields(): void
+    {
+        $e=$this->evidence(['confidence'=>30]);
+        $this->register($this->withReceipt($this->payload(),$e))->assertCreated()->assertJsonPath('id_check.status','matched');
+    }
+
 }
