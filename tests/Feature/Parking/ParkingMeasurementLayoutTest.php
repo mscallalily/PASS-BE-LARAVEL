@@ -109,12 +109,12 @@ class ParkingMeasurementLayoutTest extends ParkingTestCase
         $g = ParkingMapLayout::geometry(true);
         $bays = array_filter(ParkingMapLayout::bays(true), fn ($bay) => $bay['area'] === 'CAR');
         $counts = array_count_values(array_column($bays, 'row'));
-        $this->assertSame(17, $counts['North perimeter']);
+        $this->assertSame(18, $counts['North perimeter']);
         $this->assertSame(15, $counts['Interior row A']);
         $this->assertSame(4, $counts['South row']);
         $this->assertSame(8, $counts['Interior row B']);
         $this->assertSame('/references/dyci-marked-lineup-20261018.png', $g['measurement_basis']['lineup_source_image']);
-        $this->assertSame(1, $counts['North row / accessible']);
+        $this->assertSame(0, count(array_filter($bays, fn ($bay) => $bay['pwd'])));
         $this->assertSame(45, count(array_filter($g['circulation'], fn ($c) => (float) ($c['width_m'] ?? 0) === 4.5)));
         $this->assertSame(0, count(array_filter($g['circulation'], fn ($c) => $c['kind'] === 'parallel_aisle')));
         $this->assertSame([], array_keys(array_filter(ParkingMapLayout::slotPositions(true), fn ($bay) => $bay['area'] === 'CAR' && $bay['w'] > $bay['h'])));
@@ -290,11 +290,13 @@ class ParkingMeasurementLayoutTest extends ParkingTestCase
         $entry = $this->gate('entry', ['rfid_tag_uid' => $car['tag']]);
         $before = $this->activeTransaction($car['vehicle_id']);
         DB::table('parking_slots')->where('slot_code', 'M-23')->update(['slot_status' => 'maintenance', 'pos_x' => null, 'pos_y' => null]);
+        DB::table('parking_slots')->where('slot_code', 'C-42')->update(['is_pwd_slot' => true]);
         DB::table('access_gates')->update(['gate_status' => 'offline']);
         $this->assertGreaterThan(0, app(ParkingLayoutUpdater::class)->apply());
         $this->assertSame(0, app(ParkingLayoutUpdater::class)->apply());
         $this->assertEquals($before, $this->activeTransaction($car['vehicle_id']));
         $this->assertSame(139, DB::table('parking_slots')->count());
+        $this->assertFalse((bool) DB::table('parking_slots')->where('slot_code', 'C-42')->value('is_pwd_slot'));
         $this->assertSame('maintenance', DB::table('parking_slots')->where('slot_code', 'M-23')->value('slot_status'));
         $this->assertSame('offline', DB::table('access_gates')->value('gate_status'));
         $map = $this->getJson('/api/parking/map')->assertOk()->json();

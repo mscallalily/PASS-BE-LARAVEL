@@ -645,7 +645,7 @@ class ParkingAccessService
 
         return match (true) {
             $license->license_status !== 'valid' => "Driver's license is {$license->license_status}.",
-            $license->verification_status === 'pending_review' => "Driver's license is waiting for staff verification.",
+            $license->verification_status === 'pending_review' => "Driver's license check is unfinished; retry the automatic check or contact PASS staff.",
             $license->verification_status === 'needs_correction' => "Driver's license needs correction before it can be verified.",
             $license->verification_status !== 'verified' => "Driver's license is still being checked.",
             $license->expiry_date && $license->expiry_date < $today => "Driver's license expired on {$license->expiry_date}.",

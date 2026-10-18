@@ -110,7 +110,7 @@ Route::post(
     Route::patch('/licenses/{id}/review', [DriverLicenseController::class, 'review'])
         ->whereNumber('id');
     Route::post('/licenses/{id}/recheck', [DriverLicenseController::class, 'recheck'])
-        ->whereNumber('id');
+        ->whereNumber('id')->middleware('throttle:10,1');
 
     // Parking operations: two parking areas, slot assignment, occupancy.
     Route::prefix('parking')->group(function () {

@@ -8,6 +8,7 @@ use App\Services\LicenseVerification\LicenseDocumentReader;
 use App\Services\LicenseVerification\LicenseValidationRules;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Throwable;
@@ -45,6 +46,7 @@ class ProcessLicenseVerification implements ShouldQueue
 
         $result = $rules->evaluate($document, [
             'license_number' => (string) $license->license_number,
+            'license_type' => $license->license_type,
             'expiry_date' => $license->expiry_date?->toDateString() ?? 'today',
             'first_name' => $license->driver?->first_name,
             'last_name' => $license->driver?->last_name,
@@ -73,7 +75,9 @@ class ProcessLicenseVerification implements ShouldQueue
             $this->store($license, 'pending_review', null, [
                 'preliminary' => true,
                 'official_verification' => 'unavailable',
-                'notes' => ['The automatic check failed unexpectedly. Staff must review the document manually.'],
+                'decision_kind' => 'check_unavailable',
+                'policy_version' => 'license-document-auto-v1',
+                'notes' => ['The automatic check could not complete. The submission remains unapproved. Retry the automatic check after the service is restored.'],
                 'checks' => [],
             ]);
         }
@@ -120,26 +124,28 @@ class ProcessLicenseVerification implements ShouldQueue
      */
     private function store(DriverLicense $license, string $status, ?string $reason, array $ocrResult): void
     {
-        $old = LicenseActivity::snapshot($license);
+        DB::transaction(function () use ($license, $status, $reason, $ocrResult) {
+            $old = LicenseActivity::snapshot($license);
 
-        $updated = DriverLicense::whereKey($license->license_id)
-            ->where('verification_run_id', $this->runId)
-            ->where('verification_status', 'processing')
-            ->update([
-                'verification_status' => $status,
-                'verification_source' => 'automatic',
-                'verification_reason' => $reason,
-                'ocr_result' => json_encode($ocrResult),
-                'checked_at' => now(),
-                'updated_at' => now(),
-            ]);
+            $updated = DriverLicense::whereKey($license->license_id)
+                ->where('verification_run_id', $this->runId)
+                ->where('verification_status', 'processing')
+                ->update([
+                    'verification_status' => $status,
+                    'verification_source' => 'automatic',
+                    'verification_reason' => $reason,
+                    'ocr_result' => json_encode($ocrResult),
+                    'checked_at' => now(),
+                    'updated_at' => now(),
+                ]);
 
-        if (!$updated) {
-            return;
-        }
+            if (!$updated) {
+                return;
+            }
 
-        $license->refresh();
-        LicenseActivity::audit("license_auto_{$status}", $license, $old);
-        LicenseActivity::notifyOwner($license, $status, $reason, automatic: true);
+            $license->refresh();
+            LicenseActivity::audit("license_auto_{$status}", $license, $old);
+            LicenseActivity::notifyOwner($license, $status, $reason, automatic: true);
+        });
     }
 }

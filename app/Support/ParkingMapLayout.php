@@ -117,7 +117,7 @@ class ParkingMapLayout
             }
         }
         if ($measured) {
-            $add('CAR', 42, 4.5, 0.06, 4.0, 5.0, 'North row / accessible', true);
+            $add('CAR', 42, 4.5, 0, 2.5, 5.0, 'North perimeter');
             $codes = array_merge(range(1, 41), range(43, 55));
             foreach (self::carProposal() as $i => $bay) {
                 $add('CAR', $codes[$i], $bay['x'], $bay['y'], $bay['width'], $bay['depth'], $bay['row'], false, $bay['angle']);
@@ -125,7 +125,7 @@ class ParkingMapLayout
         } else {
             // All 55 existing car codes have separate diagram symbols. These are
             // deliberately NOT metre-sized bays; physical fit remains a separate view.
-            $add('CAR', 42, 7.5, 0, 2.8, 3.6, 'Diagram north row', true);
+            $add('CAR', 42, 7.5, 0, 2.8, 3.6, 'Diagram north row');
             foreach (range(1, 18) as $i) {
                 $add('CAR', $i, 10.5 + ($i - 1) * 2, 0, 1.8, 3.6, 'Diagram north row');
             }
@@ -160,8 +160,7 @@ class ParkingMapLayout
         }
         $clearances[] = ['polygon' => self::rectangle('MC', 28.4, 0, 2.56, 8.8), 'kind' => 'motorcycle_end_aisle', 'width_m' => 2.56];
         if ($measured) {
-            $clearances[] = ['polygon' => self::carRectangle([4.5, 6.26], 4, 4.5), 'kind' => 'car_aisle', 'width_m' => 4.5];
-            $clearances[] = ['polygon' => self::carRectangle([4.5, 5.06], 4, 1.2), 'kind' => 'walkway', 'width_m' => 1.2];
+            $clearances[] = ['polygon' => self::carRectangle([4.5, 5], 2.5, 4.5), 'kind' => 'car_aisle', 'width_m' => 4.5];
             foreach (self::carProposal() as $bay) {
                 $angle = deg2rad($bay['angle']);
                 $front = [$bay['x'] - $bay['depth'] * sin($angle), $bay['y'] + $bay['depth'] * cos($angle)];
@@ -248,7 +247,7 @@ class ParkingMapLayout
             'car_edges_m' => self::CAR_EDGES,
             'note' => $measured ? 'Proposed layout at one scale: 8 drawing units = 1 metre. Motorcycle dimensions are owner-reported. Car edges 1–6 follow the owner-numbered sketch. The shared motorcycle end is included; the short NW return and all bearings are estimated, not surveyed. Earlier cumulative map-ruler labels have been removed.' : 'Complete slot map: C-01–C-55 and M-01–M-84. Car bay symbols and aisles are schematic, not to scale. Their diagram positions do not establish physical fit. Use Parking layout for full-size bays and owner-reported boundaries.',
             'motorcycle_proposal' => '84 compact bays: 3 rows × 28, each 1.00 × 2.00 m. Two 1.20 m internal aisles, a 2.56 m connecting end aisle, 0.40 m end margin and 0.20 m side margins. Narrow aisles are a walk/push proposal for compact motorcycles and scooters; actual vehicle sizes and manoeuvring must be checked.',
-            'car_proposal' => $measured ? '45 full-size independent proposed bays: 17 north-perimeter regular bays, 15 in interior row A, eight in interior row B, four in the south row and C-42 accessible near the shared approach. All 44 regular bays are 2.50 × 5.00 m; C-42 is 4.00 × 5.00 m with a 1.20 m front walkway. Internal access frontages are 4.50 m, a tight concept allowance requiring actual turning checks, not a certified standard aisle. No tandem bays are used. This is not a maximum-capacity or vehicle swept-path certification. All 55 car records remain; ten codes have no measured position. The 45-position count is conditional on the reconstructed outline and site validation.' : 'All 55 existing car slots remain as schematic inventory symbols. Diagram sizes are not physical dimensions. Parking layout shows 45 full-size proposed bays on the corrected numbered outline; physical capacity remains subject to site confirmation.',
+            'car_proposal' => $measured ? '45 full-size independent proposed bays: 18 north-perimeter regular bays including C-42, 15 in interior row A, eight in interior row B and four in the south row. All 45 car bays are regular 2.50 × 5.00 m bays. C-42 has no PWD designation; this prototype has no accessibility eligibility workflow. Internal access frontages are 4.50 m, a tight concept allowance requiring actual turning checks, not a certified standard aisle. No tandem bays are used. This is not a maximum-capacity or vehicle swept-path certification. All 55 car records remain; ten codes have no measured position. The 45-position count is conditional on the reconstructed outline and site validation.' : 'All 55 existing car slots remain as schematic inventory symbols. Diagram sizes are not physical dimensions. Parking layout shows 45 full-size proposed bays on the corrected numbered outline; physical capacity remains subject to site confirmation.',
             'vehicle_measurements' => ['car_width_m' => 2.0447, 'car_length_m' => 4.7752, 'car_mirrors_included' => false, 'motorcycle_width_m' => 0.5969, 'motorcycle_length_m' => 1.905, 'note' => 'Owner-measured maximum dimensions. Car width is body-only; mirrors, wheelbase, steering lock and turning envelope are not measured. These figures do not replace bay dimensions.'],
             'circulation_note' => $measured ? 'Opposing rows share 4.50 m internal aisles. The western passage connects the lower aisle. Every frontage connects geometrically to the shared approach through a nominal 3.06 m clear-envelope grid. Connectivity is not a steering or swept-path test. The 4.50 m aisle choice, mirrors, wheelbase, turning lock, end manoeuvres, accessibility and the estimated NW boundary require campus validation before marking bays.' : 'This optional inventory diagram uses schematic symbols. It does not represent physical aisle widths or a validated vehicle turning path.',
             'inventory' => ['motorcycle_configured' => 84, 'motorcycle_drawn' => 84, 'car_configured' => 55, 'car_drawn' => $measured ? 45 : 55],
@@ -256,7 +255,6 @@ class ParkingMapLayout
                 ['type' => 'car', 'label' => 'Car bay', 'width_m' => 2.5, 'length_m' => 5.0, 'basis' => 'Philippine NBCP perpendicular/diagonal bay reference. The proposed 4.50 m internal aisle is a tight concept allowance, not a legal-standard or turning-clearance claim; validate it using the actual vehicles.', 'source' => 'National Building Code IRR, Rule VII, Section 707(4)(b), Pasig government copy, p. 100', 'url' => 'https://assets.pasigcity.gov.ph/storage/city_ordinance/2024/10/21/67c675622ba621741059426part%201.pdf'],
                 ['type' => 'parallel', 'label' => 'Parallel car bay', 'width_m' => 2.15, 'length_m' => 6.0, 'basis' => 'Philippine NBCP parallel bay reference. Proposed 3.60 m access frontage and end manoeuvres need actual vehicle checks.', 'source' => 'DPWH Department Order 56, series of 2016, Annex A, parking dimensions', 'url' => 'https://www.dpwh.gov.ph/dpwh/sites/default/files/issuances/DO_056_s2016.pdf'],
                 ['type' => 'motorcycle', 'label' => 'Compact motorcycle bay', 'width_m' => 1.0, 'length_m' => 2.0, 'basis' => 'Compact design reference from UK council guidance, not a Philippine legal minimum or suitable for every motorcycle. A larger vehicle/bay requirement reduces the proposed count.', 'source' => 'North Tyneside Council, Transport and Highways SPD 2022, Appendix E', 'url' => 'https://my.northtyneside.gov.uk/sites/default/files/web-page-related-files/Transport%20and%20Highways%20SPD%202022.pdf'],
-                ['type' => 'accessible', 'label' => 'Accessible car bay', 'width_m' => 4.0, 'length_m' => 5.0, 'basis' => '2024 BP 344 IRR bay dimensions with a 1.20 m front walkway. This proposal does not establish the required accessible count, route, slope or full compliance.', 'source' => 'NCDA, revised 2024 BP 344 IRR, Section A.6 Parking', 'url' => 'https://ncda.gov.ph/revised-2024-rules-and-regulations-implementing-batas-pambansa-344/'],
             ],
             'capacity_review' => ['reported_car_capacity' => 55, 'proposed_car_bays' => 45, 'unresolved_car_positions' => 10, 'survey_verified' => false, 'note' => 'The target is not reduced. Forty-five independent positions have a conditional full-size geometric proposal. This is a found arrangement, not a proven maximum. Validate boundary estimates and tight circulation on site. The remaining ten inventory codes have no proposed physical position.'],
             'pathway_note' => 'The shared road follows the existing gate and diagonal route. Its width is 3.06 m in total, separate from the motorcycle parcel; arrows indicate alternating entry/exit, not two simultaneous car lanes. Internal parking aisles have been rearranged. Physical gate and turning clearances remain subject to campus review.',

@@ -32,6 +32,9 @@ class ParkingLayoutUpdater
                 ];
                 if ($bay && $bay['pwd']) {
                     $values['is_pwd_slot'] = true;
+                } elseif ($slot->area_code === 'CAR' && $slot->slot_code === 'C-42') {
+                    // Remove this prototype designation without changing any session/status.
+                    $values['is_pwd_slot'] = false;
                 }
                 $different = collect($values)->contains(fn ($value, $key) => $value === null ? $slot->$key !== null : $slot->$key === null || (int) $slot->$key !== (int) $value);
                 if ($different) {
