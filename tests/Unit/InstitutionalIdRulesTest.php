@@ -57,4 +57,26 @@ class InstitutionalIdRulesTest extends TestCase
         $this->assertSame(['last_name'=>'DE LA CRUZ'],InstitutionalIdReader::nameFields("DE LA\nCRUZ",'last_name'));
     }
 
+    public function test_repeated_segmentation_is_one_method_and_low_or_conflicting_number_evidence_does_not_pass(): void
+    {
+        $make=fn($source,$confidence=49.3,$number='2026-00123')=>['source'=>$source,'number_confidence'=>$confidence,'text'=>$number];
+        $signals=\App\Services\Registration\InstitutionalIdSignals::class;
+        $this->assertFalse($signals::numberConsensus([$make('broad_gray'),$make('broad_gray'),$make('broad_gray')],'college')['reliable']);
+        $r=$signals::numberConsensus([$make('broad_gray'),$make('broad_threshold'),$make('tight_color')],'college');
+        $this->assertTrue($r['reliable']);
+        $this->assertTrue($signals::confirmsNumber($r,'202600123'));
+        $this->assertFalse($signals::confirmsNumber($r,'202600128'));
+        $bad=$r;$bad['sources']=['broad_gray','tight_color','unknown_method'];$this->assertFalse($signals::confirmsNumber($bad,'202600123'));
+        $this->assertFalse($signals::numberConsensus([$make('broad_gray'),$make('broad_threshold'),$make('tight_color',39.9)],'college')['reliable']);
+        $this->assertFalse($signals::numberConsensus([$make('broad_gray'),$make('broad_threshold'),$make('tight_color',49.3,'2026-00128')],'college')['reliable']);
+        $this->assertFalse($signals::numberConsensus([$make('broad_gray'),$make('broad_threshold'),$make('full_card')],'college')['reliable']);
+    }
+
+    public function test_school_detection_handles_one_domain_glyph_error_but_not_unrelated_or_format_only_text(): void
+    {
+        $signals=\App\Services\Registration\InstitutionalIdSignals::class;
+        foreach(['www.dyci.edu.ph','www.dycl.edu.ph','DYC1.EDU.PH','Dr. Yanga’s C0lleges Inc.','DYCI MAGIS QUAM SCHOLA FAMILIA'] as $text) $this->assertTrue($signals::school($text),$text);
+        foreach(['DYCI','MAGIS QUAM SCHOLA FAMILIA','www.dyci.edu.com','Other College Student No. 2026-00123','Juan Dela Cruz 022-0001'] as $text) $this->assertFalse($signals::school($text),$text);
+    }
+
 }

@@ -173,13 +173,16 @@ class RegistrationIdTest extends ParkingTestCase
         $this->post('/api/registration/id-check', $data, ['Accept' => 'application/json'])->assertOk()->assertJsonPath('data.status', 'needs_correction');
     }
 
-    public function test_low_confidence_does_not_claim_match_and_unrelated_document_is_returned(): void
+    public function test_low_confidence_or_unconfirmed_school_cannot_claim_match_or_activate(): void
     {
         $low = $this->evidence(['field_confidence' => ['first_name' => 55, 'last_name' => 90, 'user_code' => 90]]);
         $r = $this->register($this->withReceipt($this->payload(), $low))->assertCreated()->assertJsonPath('id_check.status', 'manual_review');
         $this->assertDatabaseHas('users', ['user_id' => (int) $r->json('user.id'), 'account_status' => 'pending']);
         $unrelated = $this->evidence(['school_marker' => false]);
-        $this->register($this->withReceipt($this->payload(changes: ['email' => 'other@example.test', 'user_code' => '2024-02345']), $unrelated))->assertUnprocessable()->assertJsonValidationErrors('school_id_file');
+        $unrelated['fields']['user_code']='2024-02345';
+        $other=$this->register($this->withReceipt($this->payload(changes: ['email' => 'other@example.test', 'user_code' => '2024-02345']), $unrelated))->assertCreated()->assertJsonPath('id_check.status','manual_review')->assertJsonPath('id_check.checks.school.result','uncertain');
+        $this->verifyRegistration((int)$other->json('user.id'))->assertOk();
+        $this->assertDatabaseHas('users',['user_id'=>(int)$other->json('user.id'),'account_status'=>'pending']);
     }
 
     public function test_failed_document_read_returns_retryable_staff_review_receipt(): void
@@ -394,6 +397,49 @@ class RegistrationIdTest extends ParkingTestCase
     {
         $e=$this->evidence(['confidence'=>30]);
         $this->register($this->withReceipt($this->payload(),$e))->assertCreated()->assertJsonPath('id_check.status','matched');
+    }
+
+    private function consensus(string $number='202401234'): array
+    {
+        return ['value'=>$number,'reliable'=>true,'sources'=>['broad_gray','broad_threshold','tight_color'],'groups'=>3,'conflicting_values'=>false];
+    }
+
+    public function test_reported_borderline_quality_and_repeated_matching_number_can_activate_after_email(): void
+    {
+        $e=$this->evidence(['width'=>1308,'height'=>2049,'sharpness'=>59.1,'field_confidence'=>['first_name'=>91.9,'last_name'=>96.8,'user_code'=>49.3],'number_consensus'=>$this->consensus()]);
+        $r=$this->register($this->withReceipt($this->payload(),$e))->assertCreated()->assertJsonPath('id_check.status','matched')->assertJsonPath('id_check.checks.image_quality.advisory',true)->assertJsonPath('id_check.checks.user_code.result','pass');
+        $this->verifyRegistration((int)$r->json('user.id'))->assertOk();
+        $this->assertDatabaseHas('users',['user_id'=>(int)$r->json('user.id'),'account_status'=>'active']);
+    }
+
+    public function test_low_sharpness_is_not_a_veto_when_all_identity_text_checks_are_strong(): void
+    {
+        $e=$this->evidence(['sharpness'=>59.1]);
+        $this->register($this->withReceipt($this->payload(),$e))->assertCreated()->assertJsonPath('id_check.status','matched')->assertJsonPath('id_check.checks.image_quality.result','pass');
+    }
+
+    public function test_single_low_confidence_number_missing_branding_or_low_resolution_still_require_review(): void
+    {
+        foreach(['single','branding','resolution','conflict','wrong_value','wrong_sources'] as $i=>$kind) {
+            Cache::flush(); $number="20240123{$i}";
+            $e=$this->evidence(['sharpness'=>59.1,'confidence'=>50,'field_confidence'=>['first_name'=>95,'last_name'=>95,'user_code'=>49.3],'number_consensus'=>$this->consensus($number)]);
+            $e['fields']['user_code']=$number;
+            if($kind==='single') unset($e['number_consensus']);
+            if($kind==='branding') $e['school_marker']=false;
+            if($kind==='resolution') $e['width']=400;
+            if($kind==='conflict') $e['field_conflicts']=['user_code'=>true];
+            if($kind==='wrong_value') $e['number_consensus']['value']='202400000';
+            if($kind==='wrong_sources') $e['number_consensus']['sources']=['broad_gray','broad_gray','broad_gray'];
+            $r=$this->register($this->withReceipt($this->payload(changes:['user_code'=>$number,'email'=>"decision{$i}@example.test"]),$e))->assertCreated()->assertJsonPath('id_check.status','manual_review');
+            $this->verifyRegistration((int)$r->json('user.id'))->assertOk();
+            $this->assertDatabaseHas('users',['user_id'=>(int)$r->json('user.id'),'account_status'=>'pending']);
+        }
+    }
+
+    public function test_consensus_does_not_override_a_submitted_number_mismatch(): void
+    {
+        $e=$this->evidence(['sharpness'=>59.1,'field_confidence'=>['first_name'=>95,'last_name'=>95,'user_code'=>49.3],'number_consensus'=>$this->consensus()]);
+        $this->register($this->withReceipt($this->payload(changes:['user_code'=>'202409999']),$e))->assertUnprocessable()->assertJsonValidationErrors('school_id_file');
     }
 
 }

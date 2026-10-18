@@ -19,7 +19,7 @@ class InstitutionalIdReader
         $evidence = [
             'kind' => 'image', 'engine_available' => $full['engine_available'],
             'confidence' => $full['confidence'], 'width' => $full['width'], 'height' => $full['height'], 'sharpness' => $full['sharpness'],
-            'school_marker' => str_contains($compact, 'DYCIEDUPH') || (str_contains($compact, 'YANGA') && str_contains($compact, 'COLLEG')),
+            'school_marker' => InstitutionalIdSignals::school($full['text'] ?? ''),
             'fields' => [], 'field_confidence' => [], 'field_conflicts' => [],
         ];
         if (! $full['engine_available']) {
@@ -62,7 +62,7 @@ class InstitutionalIdReader
                 $temp = tempnam(sys_get_temp_dir(), 'pass_id_');
                 try {
                     imagepng($canvas, $temp);
-                    $reads = [$this->reader->readTextImage($temp, 6), $this->reader->readTextImage($temp, 7)];
+                    $reads = [$this->reader->readTextImage($temp, 6) + ['source' => 'broad_gray'], $this->reader->readTextImage($temp, 7) + ['source' => 'broad_gray']];
                     // A second contrast pass handles shaded or marked-up samples;
                     // neither color detection nor highlights are required by the template.
                     if (max(array_map(fn ($r) => $this->fieldConfidence($r, $key, $category), $reads)) < 90) {
@@ -73,8 +73,8 @@ class InstitutionalIdReader
                             }
                         }
                         imagepng($canvas, $temp);
-                        $reads[] = $this->reader->readTextImage($temp, 6);
-                        $reads[] = $this->reader->readTextImage($temp, 7);
+                        $reads[] = $this->reader->readTextImage($temp, 6) + ['source' => 'broad_threshold'];
+                        $reads[] = $this->reader->readTextImage($temp, 7) + ['source' => 'broad_threshold'];
                     }
                     if ($nameColor && max(array_map(fn ($r) => $this->fieldConfidence($r, $key, $category), $reads)) < 90) {
                         // Keep colored lettering/background information and try a
@@ -101,27 +101,58 @@ class InstitutionalIdReader
                             imagecopy($padded, $color, 20, 20, 0, 0, imagesx($color), imagesy($color));
                             imagedestroy($color);
                             imagepng($padded, $temp);
-                            imagedestroy($padded);
-                            $numberRead = $this->reader->readTextImage($temp, 7);
+                            $numberRead = $this->reader->readTextImage($temp, 7) + ['source' => 'tight_color'];
+                            $numberRead['number_confidence'] = $this->fieldConfidence($numberRead, 'user_code', $category);
                             $broadNumbers = array_values(array_unique(array_merge(...array_map(fn ($r) => self::numbers($r['text'] ?? '', $category), $reads))));
                             $narrowNumbers = self::numbers($numberRead['text'] ?? '', $category);
                             // Tight crops may clip digits. Boost only when a broader
                             // read independently contains the same complete number.
-                            if (count($narrowNumbers) !== 1 || !in_array($narrowNumbers[0], $broadNumbers, true)) {
+                            if (count($narrowNumbers) !== 1 || ! in_array($narrowNumbers[0], $broadNumbers, true)) {
                                 $numberRead['confidence'] = min(79, $numberRead['confidence'] ?? 0);
-                                foreach ($numberRead['words'] ?? [] as $i => $word) $numberRead['words'][$i]['confidence'] = min(79, $word['confidence']);
+                                foreach ($numberRead['words'] ?? [] as $i => $word) {
+                                    $numberRead['words'][$i]['confidence'] = min(79, $word['confidence']);
+                                }
                             }
                             $reads[] = $numberRead;
+                            if ($this->fieldConfidence($numberRead, 'user_code', $category) < 80) {
+                                imagefilter($padded, IMG_FILTER_GRAYSCALE);
+                                imagepng($padded, $temp);
+                                $reads[] = $this->reader->readTextImage($temp, 7) + ['source' => 'tight_gray'];
+                                // A contrast-enhanced crop provides a further check;
+                                // changing page segmentation alone is not another method.
+                                imagefilter($padded, IMG_FILTER_CONTRAST, -60);
+                                imagepng($padded, $temp);
+                                $reads[] = $this->reader->readTextImage($temp, 7) + ['source' => 'tight_contrast'];
+                            }
+                            imagedestroy($padded);
                         }
+                        if (max(array_map(fn ($r) => $this->fieldConfidence($r, 'user_code', $category), $reads)) < 80) {
+                            $reads = array_merge($reads, $this->numberMarginReads($image, $category));
+                        }
+                        $reads[] = $full + ['source' => 'full_card'];
+                        foreach ($reads as $i => $r) {
+                            $reads[$i]['number_confidence'] ??= $this->fieldConfidence($r, 'user_code', $category);
+                        }
+                        $evidence['number_consensus'] = InstitutionalIdSignals::numberConsensus($reads, $category);
                         $evidence['field_conflicts'][$key] = $this->numberConflict($reads, $category);
                     }
-                    usort($reads, fn ($a, $b) => $this->fieldConfidence($b, $key, $category) <=> $this->fieldConfidence($a, $key, $category));
+                    usort($reads, function ($a, $b) use ($key, $category) {
+                        if ($key === 'user_code') {
+                            $validA = count(self::numbers($a['text'] ?? '', $category)) === 1;
+                            $validB = count(self::numbers($b['text'] ?? '', $category)) === 1;
+                            if ($validA !== $validB) {
+                                return $validB <=> $validA;
+                            }
+                        }
+
+                        return $this->fieldConfidence($b, $key, $category) <=> $this->fieldConfidence($a, $key, $category);
+                    });
                     $read = $reads[0];
                     $read['confidence'] = $this->fieldConfidence($read, $key, $category);
                     if ($key === 'school') {
                         foreach ($reads as $schoolRead) {
                             $compactRegion = preg_replace('/[^A-Z0-9]/', '', strtoupper($schoolRead['text'] ?? ''));
-                            $evidence['school_marker'] = $evidence['school_marker'] || str_contains($compactRegion, 'DYCIEDUPH');
+                            $evidence['school_marker'] = $evidence['school_marker'] || InstitutionalIdSignals::school($schoolRead['text'] ?? '');
                         }
 
                         continue;
@@ -129,7 +160,9 @@ class InstitutionalIdReader
                 } finally {
                     @unlink($temp);
                     imagedestroy($canvas);
-                    if ($nameColor) imagedestroy($nameColor);
+                    if ($nameColor) {
+                        imagedestroy($nameColor);
+                    }
                 }
                 $text = trim($read['text'] ?? '');
                 if ($key === 'user_code') {
@@ -162,7 +195,102 @@ class InstitutionalIdReader
             imagedestroy($image);
         }
 
+        if (! $evidence['school_marker']) {
+            $evidence['school_marker'] = $this->readSchoolBranding($path, $category);
+        }
+
         return $evidence;
+    }
+
+    private function numberMarginReads(\GdImage $image, string $category): array
+    {
+        // Extra margins tolerate small framing/resize differences and soft edges.
+        [$l, $t, $r, $b] = $category === 'employee' ? [.77, .855, .99, .905] : [.47, .675, .80, .722];
+        $crop = imagecrop($image, ['x' => (int) ($l * imagesx($image)), 'y' => (int) ($t * imagesy($image)),
+            'width' => max(1, (int) ($r * imagesx($image)) - (int) ($l * imagesx($image))),
+            'height' => max(1, (int) ($b * imagesy($image)) - (int) ($t * imagesy($image)))]);
+        if (! $crop) {
+            return [];
+        }
+        $scaled = imagescale($crop, 1000, -1, IMG_BILINEAR_FIXED);
+        imagedestroy($crop);
+        $canvas = imagecreatetruecolor(imagesx($scaled) + 40, imagesy($scaled) + 40);
+        imagefill($canvas, 0, 0, imagecolorallocate($canvas, 255, 255, 255));
+        imagecopy($canvas, $scaled, 20, 20, 0, 0, imagesx($scaled), imagesy($scaled));
+        imagedestroy($scaled);
+        $temp = tempnam(sys_get_temp_dir(), 'pass_number_');
+        try {
+            imagepng($canvas, $temp);
+            $reads = [$this->reader->readTextImage($temp, 7) + ['source' => 'tight_color']];
+            imagefilter($canvas, IMG_FILTER_GRAYSCALE);
+            imagepng($canvas, $temp);
+            $reads[] = $this->reader->readTextImage($temp, 7) + ['source' => 'tight_gray'];
+            [$bl,$bt,$br,$bb] = $category === 'employee' ? [.59, .85, .995, .91] : [.23, .675, .82, .722];
+            $broad = imagecrop($image, ['x' => (int) ($bl * imagesx($image)), 'y' => (int) ($bt * imagesy($image)),
+                'width' => max(1, (int) ($br * imagesx($image)) - (int) ($bl * imagesx($image))),
+                'height' => max(1, (int) ($bb * imagesy($image)) - (int) ($bt * imagesy($image)))]);
+            if ($broad) {
+                $bscaled = imagescale($broad, 1000, -1, IMG_BILINEAR_FIXED);
+                imagedestroy($broad);
+                $bpadded = imagecreatetruecolor(imagesx($bscaled) + 40, imagesy($bscaled) + 40);
+                imagefill($bpadded, 0, 0, imagecolorallocate($bpadded, 255, 255, 255));
+                imagecopy($bpadded, $bscaled, 20, 20, 0, 0, imagesx($bscaled), imagesy($bscaled));
+                imagedestroy($bscaled);
+                imagepng($bpadded, $temp);
+                imagedestroy($bpadded);
+                $reads[] = $this->reader->readTextImage($temp, 7) + ['source' => 'broad_color'];
+            }
+
+            return $reads;
+        } finally {
+            imagedestroy($canvas);
+            @unlink($temp);
+        }
+    }
+
+    private function readSchoolBranding(string $path, string $category): bool
+    {
+        $image = @imagecreatefromstring(file_get_contents($path));
+        if (! $image) {
+            return false;
+        }
+        // Same orientation handling as field extraction.
+        $orientation = function_exists('exif_read_data') ? (@exif_read_data($path)['Orientation'] ?? 1) : 1;
+        $angle = match ((int) $orientation) {
+            3 => 180, 6 => -90, 8 => 90, default => 0
+        };
+        if ($angle) {
+            $rotated = imagerotate($image, $angle, 0);
+            imagedestroy($image);
+            $image = $rotated;
+        }
+        $boxes = $category === 'employee' ? [[.38, 0, .995, .23], [.48, .94, .995, 1]] : [[.02, 0, .995, .25]];
+        try {
+            foreach ($boxes as [$l, $t, $r, $b]) {
+                $crop = imagecrop($image, ['x' => (int) ($l * imagesx($image)), 'y' => (int) ($t * imagesy($image)),
+                    'width' => max(1, (int) (($r - $l) * imagesx($image))), 'height' => max(1, (int) (($b - $t) * imagesy($image)))]);
+                if (! $crop) {
+                    continue;
+                }
+                $scaled = imagescale($crop, 1600, -1, IMG_BILINEAR_FIXED);
+                imagedestroy($crop);
+                $temp = tempnam(sys_get_temp_dir(), 'pass_brand_');
+                try {
+                    imagepng($scaled, $temp);
+                    $read = $this->reader->readTextImage($temp, 6);
+                    if (InstitutionalIdSignals::school($read['text'] ?? '')) {
+                        return true;
+                    }
+                } finally {
+                    imagedestroy($scaled);
+                    @unlink($temp);
+                }
+            }
+        } finally {
+            imagedestroy($image);
+        }
+
+        return false;
     }
 
     /** Keep suffix and initial separate without splitting compound surnames. */
@@ -180,6 +308,7 @@ class InstitutionalIdReader
             $text = trim($m[1]);
         }
         $fields[$key] = $text;
+
         return $fields;
     }
 
@@ -192,6 +321,7 @@ class InstitutionalIdReader
                 $strong = array_merge($strong, self::numbers($read['text'] ?? '', $category));
             }
         }
+
         return count(array_unique($strong)) > 1;
     }
 
