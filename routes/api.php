@@ -66,6 +66,7 @@ Route::post('/reset-password', [AuthController::class, 'resetPassword'])
 
 // Authenticated routes
 Route::middleware(['auth:sanctum', \App\Http\Middleware\AccountAccess::class])->group(function () {
+    Route::post('/vehicles/read-photo', \App\Http\Controllers\Api\VehiclePhotoReadController::class)->middleware('throttle:vehicle-photo-read');
     Route::get(
     '/vehicles/{id}/photo',
     [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'photo']
@@ -107,13 +108,13 @@ Route::post(
     Route::get('/licenses', [DriverLicenseController::class, 'index']);
     Route::get('/licenses/mine', [DriverLicenseController::class, 'mine']);
     Route::post('/licenses', [DriverLicenseController::class, 'submit'])
-        ->middleware('throttle:10,1');
+        ->middleware('throttle:license-submit');
     Route::get('/licenses/{id}/file', [DriverLicenseController::class, 'file'])
         ->whereNumber('id');
     Route::patch('/licenses/{id}/review', [DriverLicenseController::class, 'review'])
         ->whereNumber('id');
     Route::post('/licenses/{id}/recheck', [DriverLicenseController::class, 'recheck'])
-        ->whereNumber('id')->middleware('throttle:10,1');
+        ->whereNumber('id')->middleware('throttle:license-recheck');
 
     // Parking operations: two parking areas, slot assignment, occupancy.
     Route::prefix('parking')->group(function () {
