@@ -39,7 +39,7 @@ class PhotoReadAndLicenseThrottleTest extends ParkingTestCase
 
     public function test_license_submit_limit_is_per_user_and_has_retry_after_without_blocking_status_or_recheck(): void
     {
-        $this->regular();
+        $limitedUser = $this->regular();
         for ($i = 0; $i < 10; $i++) {
             $this->postJson('/api/licenses', [])->assertUnprocessable();
         }
@@ -49,6 +49,7 @@ class PhotoReadAndLicenseThrottleTest extends ParkingTestCase
         $this->regular();
         $this->postJson('/api/licenses', [])->assertUnprocessable();
         $this->travel(61)->seconds();
+        Sanctum::actingAs($limitedUser->fresh());
         $this->postJson('/api/licenses', [])->assertUnprocessable();
     }
 
