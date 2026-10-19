@@ -43,6 +43,7 @@ class LicenseValidationRulesTest extends TestCase
             'first_name' => 'Juan',
             'last_name' => 'Dela Cruz',
             'today' => '2026-10-13',
+            'license_type' => 'non_professional',
         ];
     }
 
@@ -51,15 +52,15 @@ class LicenseValidationRulesTest extends TestCase
         return (new LicenseValidationRules())->evaluate($this->document($document), $this->submitted($submitted));
     }
 
-    public function test_matching_license_goes_to_pending_review_never_verified(): void
+    public function test_matching_license_is_approved_as_document_consistency_not_issuer_authenticity(): void
     {
         $result = $this->evaluate();
 
-        $this->assertSame('pending_review', $result['decision']);
+        $this->assertSame('verified', $result['decision']);
         $this->assertSame([], $result['reasons']);
         $this->assertTrue($result['preliminary']);
         $this->assertSame('unavailable', $result['official_verification']);
-        foreach (['document_type', 'license_number', 'expiry_date', 'name'] as $check) {
+        foreach (['image_quality', 'text_extraction', 'ocr_confidence', 'document_type', 'license_number', 'expiry_date', 'name', 'license_type'] as $check) {
             $this->assertSame('pass', $result['checks'][$check]['result'], $check);
         }
     }
@@ -73,11 +74,11 @@ class LicenseValidationRulesTest extends TestCase
         $this->assertSame('fail', $result['checks']['license_number']['result']);
     }
 
-    public function test_single_character_difference_is_left_for_staff(): void
+    public function test_single_character_difference_requires_correction(): void
     {
         $result = $this->evaluate([], ['license_number' => 'N01-23-456788']);
 
-        $this->assertSame('pending_review', $result['decision']);
+        $this->assertSame('needs_correction', $result['decision']);
         $this->assertSame('uncertain', $result['checks']['license_number']['result']);
     }
 
@@ -97,11 +98,11 @@ class LicenseValidationRulesTest extends TestCase
         $this->assertSame('fail', $result['checks']['expiry_date']['result']);
     }
 
-    public function test_expiry_mismatch_with_low_confidence_is_left_for_staff(): void
+    public function test_expiry_mismatch_with_low_confidence_requires_correction(): void
     {
         $result = $this->evaluate(['confidence' => 55.0], ['expiry_date' => '2031-05-14']);
 
-        $this->assertSame('pending_review', $result['decision']);
+        $this->assertSame('needs_correction', $result['decision']);
         $this->assertSame('uncertain', $result['checks']['expiry_date']['result']);
     }
 
@@ -119,7 +120,7 @@ class LicenseValidationRulesTest extends TestCase
         $result = $this->evaluate([], ['first_name' => 'Maria', 'last_name' => 'Villanueva']);
 
         $this->assertSame('needs_correction', $result['decision']);
-        $this->assertSame('fail', $result['checks']['name']['result']);
+        $this->assertSame('uncertain', $result['checks']['name']['result']);
     }
 
     public function test_name_mismatch_is_uncertain_when_number_was_not_confirmed(): void
@@ -127,16 +128,16 @@ class LicenseValidationRulesTest extends TestCase
         $text = str_replace('N01-23-456789', '', self::CARD_TEXT);
         $result = $this->evaluate(['text' => $text], ['first_name' => 'Maria', 'last_name' => 'Villanueva']);
 
-        $this->assertSame('pending_review', $result['decision']);
+        $this->assertSame('needs_correction', $result['decision']);
         $this->assertSame('uncertain', $result['checks']['name']['result']);
     }
 
-    public function test_one_character_name_misread_still_matches(): void
+    public function test_one_character_name_misread_is_not_auto_approved(): void
     {
         $text = str_replace('DELA CRUZ, JUAN', 'DELA CRUS, JUAN', self::CARD_TEXT);
         $result = $this->evaluate(['text' => $text]);
 
-        $this->assertSame('pass', $result['checks']['name']['result']);
+        $this->assertSame('uncertain', $result['checks']['name']['result']);
     }
 
     public function test_unrelated_document_is_returned(): void
@@ -166,12 +167,12 @@ class LicenseValidationRulesTest extends TestCase
         $this->assertSame('fail', $result['checks']['image_quality']['result']);
     }
 
-    public function test_blurry_image_with_readable_number_is_left_for_staff(): void
+    public function test_blurry_image_with_readable_number_requires_correction(): void
     {
         $result = $this->evaluate(['text' => "DELA CRUZ, JUAN\nN01-23-456789\n2030/05/14", 'confidence' => 75.0, 'sharpness' => 7.0]);
 
-        $this->assertSame('pending_review', $result['decision']);
-        $this->assertSame('pass', $result['checks']['image_quality']['result']);
+        $this->assertSame('needs_correction', $result['decision']);
+        $this->assertSame('fail', $result['checks']['image_quality']['result']);
     }
 
     public function test_first_character_digit_misread_is_corrected(): void
@@ -190,11 +191,11 @@ class LicenseValidationRulesTest extends TestCase
         $this->assertStringContainsString('resolution', $result['reasons'][0]);
     }
 
-    public function test_sharp_image_with_little_text_is_left_for_staff(): void
+    public function test_sharp_image_with_little_text_requires_correction(): void
     {
         $result = $this->evaluate(['text' => 'LICENSE', 'confidence' => 35.0]);
 
-        $this->assertSame('pending_review', $result['decision']);
+        $this->assertSame('needs_correction', $result['decision']);
     }
 
     public function test_unavailable_ocr_goes_to_review_not_rejection(): void
@@ -205,11 +206,45 @@ class LicenseValidationRulesTest extends TestCase
         $this->assertSame('uncertain', $result['checks']['text_extraction']['result']);
     }
 
-    public function test_scanned_pdf_without_text_goes_to_review(): void
+    public function test_scanned_pdf_requires_image_resubmission(): void
     {
         $result = $this->evaluate(['kind' => 'pdf', 'engine_available' => false, 'engine_error' => 'The PDF has no text layer.', 'text' => '', 'confidence' => null, 'width' => null, 'height' => null, 'sharpness' => null]);
 
-        $this->assertSame('pending_review', $result['decision']);
+        $this->assertSame('needs_correction', $result['decision']);
+    }
+
+    public function test_confidence_and_quality_must_be_known_before_approval(): void
+    {
+        foreach ([['confidence' => 79.9], ['confidence' => null], ['sharpness' => null], ['width' => null]] as $document) {
+            $this->assertSame('needs_correction', $this->evaluate($document)['decision']);
+        }
+        $this->assertSame('verified', $this->evaluate(['confidence' => 80.0])['decision']);
+    }
+
+    public function test_partial_name_wrong_type_and_missing_type_never_auto_approve(): void
+    {
+        foreach ([['first_name' => 'Juan Miguel'], ['license_type' => 'professional'], ['license_type' => null], ['license_type' => 'international']] as $submission) {
+            $this->assertSame('needs_correction', $this->evaluate([], $submission)['decision']);
+        }
+    }
+
+    public function test_matching_birth_date_is_not_mistaken_for_expiry(): void
+    {
+        $this->assertSame('needs_correction', $this->evaluate([], ['expiry_date' => '1995-05-14', 'today' => '1990-01-01'])['decision']);
+    }
+
+    public function test_missing_agency_heading_and_editable_pdf_text_do_not_auto_approve(): void
+    {
+        $this->assertSame('needs_correction', $this->evaluate(['text' => str_replace('LAND TRANSPORTATION OFFICE', '', self::CARD_TEXT)])['decision']);
+        $this->assertSame('needs_correction', $this->evaluate(['kind' => 'pdf'])['decision']);
+    }
+
+    public function test_name_elsewhere_in_document_is_not_mistaken_for_printed_holder_name(): void
+    {
+        $text = str_replace('DELA CRUZ, JUAN SANTOS', 'SOMEONE ELSE', self::CARD_TEXT)."\nAnnotation: JUAN DELA CRUZ";
+        $result = $this->evaluate(['text' => $text]);
+        $this->assertSame('needs_correction', $result['decision']);
+        $this->assertSame('uncertain', $result['checks']['name']['result']);
     }
 
     public function test_license_number_helpers(): void

@@ -63,6 +63,32 @@ class User extends Authenticatable implements MustVerifyEmail
             ->exists();
     }
 
+    /**
+     * Active administrators (they approve visitor parking requests; ordinary
+     * Parking Staff cannot).
+     */
+    public function isAdmin(): bool
+    {
+        if ($this->account_status !== 'active') {
+            return false;
+        }
+
+        if ($this->user_type === 'admin') {
+            return true;
+        }
+
+        return $this->roles()
+            ->whereIn('role_code', ['admin', 'parking_admin'])
+            ->where('is_active', true)
+            ->exists();
+    }
+
+    /** Guest (visitor) account with the guest role. */
+    public function isGuest(): bool
+    {
+        return $this->roles()->where('role_code', 'guest')->exists();
+    }
+
     public function vehicles(): HasMany
     {
         return $this->hasMany(Vehicle::class, 'owner_user_id', 'user_id');

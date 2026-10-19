@@ -21,7 +21,7 @@ class SystemSettingsController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        if (!$request->user() || !$request->user()->canManageParking()) {
+        if (!$request->user() || !$request->user()->isAdmin()) {
             return response()->json(['message' => 'Unauthorized.'], 403);
         }
 
@@ -38,7 +38,7 @@ class SystemSettingsController extends Controller
         // Adjust this role check if your User model uses a different role field.
         $user = $request->user();
 
-        if (!$user || !$user->canManageParking()) {
+        if (!$user || !$user->isAdmin()) {
             return response()->json(['message' => 'Unauthorized.'], 403);
         }
 
@@ -51,7 +51,8 @@ class SystemSettingsController extends Controller
             'date_format' => 'required|in:MM/DD/YYYY,DD/MM/YYYY,YYYY-MM-DD',
         ])->validate();
 
-        DB::transaction(function () use ($validated, $user) {
+        DB::transaction(function () use ($validated, $user, $request) {
+            $before = DB::table('system_settings')->whereIn('setting_key', self::GENERAL_KEYS)->pluck('setting_value', 'setting_key')->all();
             foreach ($validated as $key => $value) {
                 DB::table('system_settings')->updateOrInsert(
                     ['setting_key' => $key],
@@ -65,10 +66,18 @@ class SystemSettingsController extends Controller
                     ]
                 );
             }
+            \App\Support\ActivityAudit::record($request, $user, 'settings_updated', 'system_settings', 0, $before, $validated);
         });
 
         return response()->json([
             'message' => 'General settings saved successfully.',
         ]);
+    }
+    // The staging route existed without an implementation. Keep the contract
+    // explicit until authenticated logo upload is developed and reviewed.
+    public function uploadLogo(Request $request): JsonResponse
+    {
+        abort_unless($request->user()?->isAdmin(), 403);
+        return response()->json(['message' => 'Logo upload is not implemented yet.'], 501);
     }
 }

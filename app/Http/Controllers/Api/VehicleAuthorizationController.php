@@ -142,6 +142,58 @@ class VehicleAuthorizationController extends Controller
         ]);
     }
 
+    /** Review a pending vehicle authorization; RFID assignment stays separate. */
+    public function review(Request $request, int $id): JsonResponse
+    {
+        $actor = $request->user();
+        abort_unless($this->canManage($actor), 403);
+        $data = $request->validate([
+            'decision' => ['required', 'in:approved,rejected'],
+            'reason' => ['required_if:decision,rejected', 'nullable', 'string', 'max:255'],
+        ]);
+        return DB::transaction(function () use ($request, $actor, $data, $id) {
+            $authorization = VehicleAuthorization::lockForUpdate()->findOrFail($id);
+            if ($authorization->authorization_status !== 'pending') {
+                return response()->json(['message' => 'Only pending authorizations can be reviewed. Refresh the list.'], 409);
+            }
+            $vehicle = DB::table('vehicles')->where('vehicle_id', $authorization->vehicle_id)->lockForUpdate()->first();
+            if (!$vehicle || $vehicle->deleted_at || $vehicle->registration_status !== 'registered') {
+                return response()->json(['message' => 'Vehicle is no longer registered.'], 422);
+            }
+            if ($data['decision'] === 'approved') {
+                $blockers = $this->liftBlockers($authorization);
+                if (!$vehicle->vehicle_photo_path || !\Illuminate\Support\Facades\Storage::disk('private')->exists($vehicle->vehicle_photo_path)) {
+                    $blockers[] = 'A vehicle photo showing the plate is required before approval.';
+                }
+                $eligibleDriver = DB::table('vehicle_driver as vd')
+                    ->join('drivers as d', 'vd.driver_id', '=', 'd.driver_id')
+                    ->join('driver_licenses as dl', 'd.driver_id', '=', 'dl.driver_id')
+                    ->where('vd.vehicle_id', $vehicle->vehicle_id)->where('d.driver_status', 'active')
+                    ->whereRaw('dl.license_id = (SELECT MAX(latest.license_id) FROM driver_licenses latest WHERE latest.driver_id = d.driver_id)')
+                    ->where('dl.verification_status', 'verified')->where('dl.license_status', 'valid')
+                    ->where('dl.expiry_date', '>=', CampusTime::date())
+                    ->where(fn ($q) => $q->whereNull('vd.authorized_from')->orWhere('vd.authorized_from', '<=', CampusTime::date()))
+                    ->where(fn ($q) => $q->whereNull('vd.authorized_until')->orWhere('vd.authorized_until', '>=', CampusTime::date()))
+                    ->exists();
+                if (!$eligibleDriver) $blockers[] = 'The latest license of an eligible linked driver must be verified and unexpired.';
+
+                if ($blockers) return response()->json(['message' => implode(' ', $blockers)], 422);
+            }
+            $old = $authorization->only(['authorization_status', 'remarks', 'reviewed_by', 'reviewed_at']);
+            $authorization->forceFill([
+                'authorization_status' => $data['decision'],
+                'remarks' => $data['reason'] ?? null,
+                'reviewed_by' => $actor->user_id,
+                'reviewed_at' => now(),
+            ])->save();
+            $this->audit($request, $actor, 'authorization_'.$data['decision'], $authorization, $old);
+            return response()->json([
+                'message' => 'Vehicle authorization '.$data['decision'].'. RFID assignment remains separate.',
+                'data' => $this->staffQuery()->where('va.authorization_id', $id)->first(),
+            ]);
+        });
+    }
+
     /**
      * Suspend an approved authorization so the vehicle is treated as unauthorized.
      */

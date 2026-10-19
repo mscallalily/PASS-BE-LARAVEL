@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Services\Parking\ParkingNotifier;
 use App\Services\Parking\VisitorPassPolicy;
+use App\Services\Parking\VisitorRequestService;
 use App\Support\CampusTime;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
@@ -23,8 +25,9 @@ use Illuminate\Validation\ValidationException;
  */
 class VisitorAccessController extends Controller
 {
-    /** Longest visit a single request may cover. */
-    private const MAX_VISIT_DAYS = 7;
+    public function __construct(private VisitorRequestService $requests)
+    {
+    }
 
     private function forbidden(Request $request): ?JsonResponse
     {
@@ -55,7 +58,7 @@ class VisitorAccessController extends Controller
             ->orderBy('vt.type_name')
             ->get(['vt.vehicle_type_id', 'vt.type_name', 'a.area_name']);
 
-        return response()->json(['visitors' => $visitors, 'vehicle_types' => $types, 'max_visit_days' => self::MAX_VISIT_DAYS, 'timezone' => CampusTime::zone()]);
+        return response()->json(['visitors' => $visitors, 'vehicle_types' => $types, 'max_visit_days' => VisitorRequestService::MAX_VISIT_DAYS, 'timezone' => CampusTime::zone()]);
     }
 
     // ----------------------------------------------------------- requests
@@ -89,8 +92,8 @@ class VisitorAccessController extends Controller
             ->orderByDesc('r.request_id')
             ->limit(300)
             ->get([
-                'r.request_id', 'r.request_status', 'r.purpose', 'r.requested_valid_from', 'r.requested_valid_until', 'r.reviewed_at', 'r.review_remarks', 'r.created_at',
-                'vis.visitor_id', DB::raw("CONCAT_WS(' ', vis.first_name, vis.last_name) as visitor_name"), 'vis.contact_number', 'vis.affiliation', 'vis.is_blacklisted',
+                'r.driver_license_photo_path', 'r.vehicle_photo_path', 'r.documents_reviewed_at', 'r.driver_name', 'r.driver_is_requester', 'r.driver_license_encrypted', 'r.driver_license_expiry', 'r.passenger_count', 'r.request_id', 'r.request_status', 'r.purpose', 'r.requested_valid_from', 'r.requested_valid_until', 'r.reviewed_at', 'r.review_remarks', 'r.created_at',
+                'vis.visitor_id', 'vis.user_id as visitor_user_id', DB::raw("CONCAT_WS(' ', vis.first_name, vis.last_name) as visitor_name"), 'vis.contact_number', 'vis.affiliation', 'vis.is_blacklisted',
                 'v.vehicle_id', 'v.plate_number', 'vt.type_name as vehicle_type', 'a.area_name', 'rev.user_code as reviewed_by',
             ])
             ->map(function ($r) use ($now) {
@@ -100,6 +103,8 @@ class VisitorAccessController extends Controller
                     'request_id' => $r->request_id,
                     'request_status' => $r->request_status,
                     'purpose' => $r->purpose,
+                    'documents' => \App\Services\Parking\VisitorRequestService::documentSummary($r),
+                    'driver' => VisitorRequestService::driverSummary($r),
                     'valid_from' => ParkingOperationsController::iso($r->requested_valid_from),
                     'valid_until' => ParkingOperationsController::iso($r->requested_valid_until),
                     'window_ended' => $r->requested_valid_until < $now->toDateTimeString(),
@@ -107,9 +112,9 @@ class VisitorAccessController extends Controller
                     'reviewed_at' => ParkingOperationsController::iso($r->reviewed_at),
                     'reviewed_by' => $r->reviewed_by,
                     'review_remarks' => $r->review_remarks,
-                    'visitor' => ['visitor_id' => $r->visitor_id, 'name' => $r->visitor_name, 'contact_number' => $r->contact_number, 'affiliation' => $r->affiliation, 'is_blacklisted' => (bool) $r->is_blacklisted],
+                    'visitor' => ['visitor_id' => $r->visitor_id, 'has_account' => (bool) $r->visitor_user_id, 'name' => $r->visitor_name, 'contact_number' => $r->contact_number, 'affiliation' => $r->affiliation, 'is_blacklisted' => (bool) $r->is_blacklisted],
                     'vehicle' => ['vehicle_id' => $r->vehicle_id, 'plate_number' => $r->plate_number, 'vehicle_type' => $r->vehicle_type, 'area_name' => $r->area_name],
-                    'pass' => $pass ? $this->passSummary($pass, $now) : null,
+                    'pass' => $pass ? self::passSummary($pass, $now) : null,
                 ];
             });
 
@@ -139,6 +144,12 @@ class VisitorAccessController extends Controller
             'color' => ['nullable', 'string', 'max:50'],
             'purpose' => ['required', 'string', 'max:150'],
             'visiting' => ['required', 'string', 'max:90'],
+            'driver_name' => ['required', 'string', 'max:200', 'regex:/^\S+(\s+\S+)+$/u'],
+            'driver_license_number' => ['required', 'string', 'min:6', 'max:30', 'regex:/^[A-Za-z0-9 -]+$/'],
+            'driver_license_expiry' => ['required', 'date_format:Y-m-d'],
+            'passenger_count' => ['required', 'integer', 'min:0', 'max:99'],
+            'driver_license_photo' => ['required', 'image', 'mimes:jpg,jpeg,png', 'max:5120'],
+            'vehicle_photo' => ['required', 'image', 'mimes:jpg,jpeg,png', 'max:5120'],
             // Campus (Asia/Manila) local times from a datetime-local input.
             'valid_from' => ['required', 'date_format:Y-m-d\TH:i'],
             'valid_until' => ['required', 'date_format:Y-m-d\TH:i'],
@@ -149,24 +160,15 @@ class VisitorAccessController extends Controller
 
         $from = CarbonImmutable::createFromFormat('Y-m-d\TH:i', $data['valid_from'], CampusTime::zone());
         $until = CarbonImmutable::createFromFormat('Y-m-d\TH:i', $data['valid_until'], CampusTime::zone());
-
-        if ($until <= $from) {
-            return $this->invalid('valid_until', 'The visit must end after it starts.');
-        }
-        if ($until <= CampusTime::now()) {
-            return $this->invalid('valid_until', 'The visit must end in the future.');
-        }
-        if ($from->diffInDays($until) > self::MAX_VISIT_DAYS) {
-            return $this->invalid('valid_until', 'A single request can cover at most ' . self::MAX_VISIT_DAYS . ' days.');
-        }
-
         $plate = strtoupper(preg_replace('/\s+/', ' ', trim($data['plate_number'])));
         $actor = $request->user();
+        if ($data['driver_license_expiry'] < CampusTime::date($until)) {
+            throw ValidationException::withMessages(['driver_license_expiry' => 'The license must be valid through the end of the visit.']);
+        }
 
-        return DB::transaction(function () use ($data, $plate, $from, $until, $actor, $request) {
+        return $this->requests->withDocuments($request, function ($paths) use ($data, $plate, $from, $until, $actor) {
             if (!empty($data['visitor_id'])) {
-                $visitor = DB::table('visitors')->where('visitor_id', $data['visitor_id'])->lockForUpdate()->first();
-                $visitorId = $visitor->visitor_id;
+                $visitorId = (int) $data['visitor_id'];
             } else {
                 $visitorId = DB::table('visitors')->insertGetId([
                     'first_name' => trim($data['first_name']),
@@ -180,166 +182,89 @@ class VisitorAccessController extends Controller
                     'created_at' => now(),
                     'updated_at' => now(),
                 ], 'visitor_id');
-                $visitor = DB::table('visitors')->where('visitor_id', $visitorId)->first();
             }
 
-            if ($visitor->is_blacklisted) {
+            if (DB::table('visitors')->where('visitor_id', $visitorId)->value('is_blacklisted')) {
                 $this->fail('visitor_id', 'This visitor is blacklisted and cannot request access.');
             }
 
-            // A plate belongs to one owner; a visitor's returning vehicle is reused.
-            $vehicle = DB::table('vehicles')->where('plate_number', $plate)->lockForUpdate()->first();
+            $vehicleId = self::registerVisitorVehicle($visitorId, $plate, (int) $data['vehicle_type_id'], $data);
+            $requestId = $this->requests->create($visitorId, $vehicleId, $data['purpose'], $data['visiting'], $from, $until, $actor, 'staff_desk');
+            DB::table('visitor_requests')->where('request_id', $requestId)->update([
+                ...$paths, 'driver_is_requester' => false, 'driver_name' => trim($data['driver_name']),
+                'driver_license_encrypted' => \Illuminate\Support\Facades\Crypt::encryptString(strtoupper(trim($data['driver_license_number']))),
+                'driver_license_expiry' => $data['driver_license_expiry'], 'passenger_count' => (int) $data['passenger_count'],
+            ]);
 
-            if ($vehicle && ((int) $vehicle->owner_visitor_id !== (int) $visitorId || $vehicle->deleted_at !== null)) {
-                $this->fail('plate_number', $vehicle->owner_user_id
-                    ? "Plate {$plate} is registered to a campus user, who must use their RFID tag."
-                    : "Plate {$plate} is registered to another visitor.");
-            }
-
-            if (!$vehicle) {
-                $vehicleId = DB::table('vehicles')->insertGetId([
-                    'owner_visitor_id' => $visitorId,
-                    'vehicle_type_id' => $data['vehicle_type_id'],
-                    'plate_number' => $plate,
-                    'make' => $data['make'] ?? null,
-                    'model' => $data['model'] ?? null,
-                    'color' => $data['color'] ?? null,
-                    'registration_status' => 'registered',
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ], 'vehicle_id');
-            } else {
-                $vehicleId = $vehicle->vehicle_id;
-            }
-
-            $areaId = DB::table('vehicles as v')->join('vehicle_types as vt', 'vt.vehicle_type_id', '=', 'v.vehicle_type_id')
-                ->where('v.vehicle_id', $vehicleId)->value('vt.parking_area_id');
-
-            $overlap = DB::table('visitor_requests')
-                ->where('vehicle_id', $vehicleId)
-                ->whereIn('request_status', ['pending', 'approved'])
-                ->where('requested_valid_from', '<', CampusTime::stored($until))
-                ->where('requested_valid_until', '>', CampusTime::stored($from))
-                ->exists();
-
-            if ($overlap) {
-                abort(409, "{$plate} already has a pending or approved request for an overlapping time.");
-            }
-
-            $requestId = DB::table('visitor_requests')->insertGetId([
-                'visitor_id' => $visitorId,
-                'vehicle_id' => $vehicleId,
-                'purpose' => Str::limit(trim($data['purpose']) . ' · Visiting: ' . trim($data['visiting']), 255, ''),
-                'destination_area_id' => $areaId,
-                'requested_valid_from' => CampusTime::stored($from),
-                'requested_valid_until' => CampusTime::stored($until),
-                'request_status' => 'pending',
-                'created_at' => now(),
-                'updated_at' => now(),
-            ], 'request_id');
-
-            $this->audit($request, 'visitor_request', $requestId, 'visitor_request_created', null, ['request_status' => 'pending', 'plate_number' => $plate]);
-
-            return response()->json(['message' => "Visitor request #{$requestId} for {$plate} is waiting for approval.", 'request_id' => $requestId], 201);
+            return response()->json(['message' => "Visitor request #{$requestId} for {$plate} is waiting for Admin approval.", 'request_id' => $requestId], 201);
         });
     }
 
-    /** Approve a pending request and issue its Visitor QR pass. */
+    /**
+     * Reuse the visitor's vehicle with this plate or register it. A plate
+     * belongs to one owner: a campus user's or another visitor's plate is refused.
+     */
+    public static function registerVisitorVehicle(int $visitorId, string $plate, int $vehicleTypeId, array $details = []): int
+    {
+        $vehicle = DB::table('vehicles')->where('plate_number', $plate)->lockForUpdate()->first();
+
+        if ($vehicle && ((int) $vehicle->owner_visitor_id !== $visitorId || $vehicle->deleted_at !== null)) {
+            throw ValidationException::withMessages(['plate_number' => $vehicle->owner_user_id
+                ? "Plate {$plate} is registered to a campus user, who must use their RFID tag."
+                : "Plate {$plate} is registered to another visitor."]);
+        }
+
+        if ($vehicle) {
+            return (int) $vehicle->vehicle_id;
+        }
+
+        return (int) DB::table('vehicles')->insertGetId([
+            'owner_visitor_id' => $visitorId,
+            'vehicle_type_id' => $vehicleTypeId,
+            'plate_number' => $plate,
+            'make' => $details['make'] ?? null,
+            'model' => $details['model'] ?? null,
+            'color' => $details['color'] ?? null,
+            'registration_status' => 'registered',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ], 'vehicle_id');
+    }
+
+    /** Only Admins approve or reject visitor requests (not ordinary Parking Staff). */
+    private function notAdmin(Request $request): ?JsonResponse
+    {
+        return $request->user()->isAdmin()
+            ? null
+            : response()->json(['message' => 'Only an Administrator can approve or reject visitor parking requests.'], 403);
+    }
+
+    /** Approve a pending request (Admin only) and issue its Visitor QR pass. */
     public function approve(Request $request, int $id): JsonResponse
     {
-        if ($denied = $this->forbidden($request)) {
+        if ($denied = $this->notAdmin($request)) {
             return $denied;
         }
 
         $data = $request->validate(['remarks' => ['nullable', 'string', 'max:255']]);
-        $actor = $request->user();
 
-        return DB::transaction(function () use ($id, $data, $actor, $request) {
-            $req = DB::table('visitor_requests')->where('request_id', $id)->lockForUpdate()->first();
+        $pass = DB::transaction(fn () => $this->requests->approve($id, $request->user(), $data['remarks'] ?? null, $request->boolean('documents_reviewed')));
 
-            if (!$req) {
-                return response()->json(['message' => 'Visitor request not found.'], 404);
-            }
-            if ($req->request_status !== 'pending') {
-                return response()->json(['message' => "This request is already {$req->request_status}."], 409);
-            }
-            if ($req->requested_valid_until <= now()->toDateTimeString()) {
-                return response()->json(['message' => 'The requested visit time has already ended. File a new request.'], 409);
-            }
-            if (DB::table('visitors')->where('visitor_id', $req->visitor_id)->value('is_blacklisted')) {
-                return response()->json(['message' => 'The visitor is blacklisted.'], 409);
-            }
-            if (!$req->vehicle_id || !DB::table('vehicles')->where('vehicle_id', $req->vehicle_id)->whereNull('deleted_at')->exists()) {
-                return response()->json(['message' => 'The request has no registered vehicle.'], 409);
-            }
-
-            $code = (string) Str::uuid();
-            $passId = DB::table('qr_passes')->insertGetId([
-                'pass_code' => $code,
-                'token_hash' => hash('sha256', $code),
-                'pass_type' => 'visitor',
-                'request_id' => $req->request_id,
-                'visitor_id' => $req->visitor_id,
-                'vehicle_id' => $req->vehicle_id,
-                'valid_from' => $req->requested_valid_from,
-                'valid_until' => $req->requested_valid_until,
-                // One entry and one exit.
-                'max_uses' => 2,
-                'use_count' => 0,
-                'pass_status' => 'active',
-                'issued_by' => $actor->user_id,
-                'issued_at' => now(),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ], 'qr_pass_id');
-
-            DB::table('visitor_requests')->where('request_id', $id)->update([
-                'request_status' => 'approved',
-                'reviewed_by' => $actor->user_id,
-                'reviewed_at' => now(),
-                'review_remarks' => $data['remarks'] ?? null,
-                'updated_at' => now(),
-            ]);
-
-            $this->audit($request, 'visitor_request', $id, 'visitor_request_approved', ['request_status' => 'pending'], ['request_status' => 'approved', 'qr_pass_id' => $passId]);
-
-            $pass = DB::table('qr_passes')->where('qr_pass_id', $passId)->first();
-
-            return response()->json(['message' => 'Request approved. Visitor QR pass issued.', 'pass' => $this->passSummary($pass, CarbonImmutable::now())]);
-        });
+        return response()->json(['message' => 'Request approved. Visitor QR pass issued and the guest was notified.', 'pass' => self::passSummary($pass, CarbonImmutable::now())]);
     }
 
+    /** Reject a pending request (Admin only) with a reason. No pass is issued. */
     public function reject(Request $request, int $id): JsonResponse
     {
-        if ($denied = $this->forbidden($request)) {
+        if ($denied = $this->notAdmin($request)) {
             return $denied;
         }
 
         $data = $request->validate(['remarks' => ['required', 'string', 'max:255']], ['remarks.required' => 'Give the reason for rejecting the request.']);
-        $actor = $request->user();
 
-        return DB::transaction(function () use ($id, $data, $actor, $request) {
-            $req = DB::table('visitor_requests')->where('request_id', $id)->lockForUpdate()->first();
+        DB::transaction(fn () => $this->requests->reject($id, $request->user(), $data['remarks']));
 
-            if (!$req) {
-                return response()->json(['message' => 'Visitor request not found.'], 404);
-            }
-            if ($req->request_status !== 'pending') {
-                return response()->json(['message' => "This request is already {$req->request_status}."], 409);
-            }
-
-            DB::table('visitor_requests')->where('request_id', $id)->update([
-                'request_status' => 'rejected',
-                'reviewed_by' => $actor->user_id,
-                'reviewed_at' => now(),
-                'review_remarks' => $data['remarks'],
-                'updated_at' => now(),
-            ]);
-
-            $this->audit($request, 'visitor_request', $id, 'visitor_request_rejected', ['request_status' => 'pending'], ['request_status' => 'rejected', 'remarks' => $data['remarks']]);
-
-            return response()->json(['message' => 'Request rejected. No QR pass was issued.']);
-        });
+        return response()->json(['message' => 'Request rejected. No QR pass was issued.']);
     }
 
     // ----------------------------------------------------------- passes
@@ -362,7 +287,7 @@ class VisitorAccessController extends Controller
             ->orderByDesc('q.qr_pass_id')
             ->limit(300)
             ->get(['q.*'])
-            ->map(fn ($p) => $this->passSummary($p, $now));
+            ->map(fn ($p) => self::passSummary($p, $now));
 
         $status = $request->query('status');
 
@@ -393,7 +318,7 @@ class VisitorAccessController extends Controller
             ? 'Campus users must use their RFID tag; Visitor QR passes are for visitors only.'
             : VisitorPassPolicy::entryProblem($pass, $vehicle, $now);
 
-        return response()->json($this->passSummary($pass, $now) + [
+        return response()->json(self::passSummary($pass, $now) + [
             'entry_allowed' => $entryProblem === null && !$inside,
             'entry_problem' => $inside ? 'The vehicle is already inside.' : $entryProblem,
             'inside' => $inside ? ['transaction_id' => $inside->transaction_id, 'slot_code' => $inside->slot_code, 'entry_datetime' => ParkingOperationsController::iso($inside->entry_datetime)] : null,
@@ -427,18 +352,28 @@ class VisitorAccessController extends Controller
 
             $this->audit($request, 'qr_pass', $id, 'qr_pass_revoked', ['pass_status' => 'active'], ['pass_status' => 'revoked', 'reason' => $data['reason']]);
 
+            // A guest with an account sees the revocation in their notifications.
+            $guestUserId = $pass->visitor_id ? DB::table('visitors')->where('visitor_id', $pass->visitor_id)->value('user_id') : null;
+            if ($guestUserId) {
+                $plate = DB::table('vehicles')->where('vehicle_id', $pass->vehicle_id)->value('plate_number');
+                ParkingNotifier::notifyUser((int) $guestUserId, 'visitor_pass_revoked', 'Visitor QR pass revoked',
+                    "Your visitor QR pass for {$plate} was revoked and can no longer be used to enter. Reason: {$data['reason']}",
+                    'qr_pass', $id, ['qr_pass_id' => $id, 'screen' => 'guest_dashboard']);
+            }
+
             return response()->json(['message' => 'QR pass revoked. It can no longer be used to enter.']);
         });
     }
 
     // ----------------------------------------------------------- helpers
 
-    private function passSummary(object $pass, CarbonImmutable $now): array
+    public static function passSummary(object $pass, CarbonImmutable $now): array
     {
         $visitor = $pass->visitor_id ? DB::table('visitors')->where('visitor_id', $pass->visitor_id)->first(['first_name', 'last_name']) : null;
         $vehicle = $pass->vehicle_id ? DB::table('vehicles as v')->leftJoin('vehicle_types as vt', 'vt.vehicle_type_id', '=', 'v.vehicle_type_id')
             ->where('v.vehicle_id', $pass->vehicle_id)->first(['v.plate_number', 'vt.type_name']) : null;
-        $requestStatus = $pass->request_id ? DB::table('visitor_requests')->where('request_id', $pass->request_id)->value('request_status') : null;
+        $visitRequest = $pass->request_id ? DB::table('visitor_requests')->where('request_id', $pass->request_id)->first() : null;
+        $requestStatus = $visitRequest?->request_status;
 
         return [
             'qr_pass_id' => $pass->qr_pass_id,
@@ -447,6 +382,8 @@ class VisitorAccessController extends Controller
             'stored_status' => $pass->pass_status,
             'request_id' => $pass->request_id,
             'request_status' => $requestStatus,
+            'driver' => $visitRequest ? VisitorRequestService::driverSummary($visitRequest) : null,
+            'documents' => $visitRequest ? VisitorRequestService::documentSummary($visitRequest) : null,
             'legacy' => !$pass->request_id,
             'visitor_name' => $visitor ? trim("{$visitor->first_name} {$visitor->last_name}") : null,
             'plate_number' => $vehicle->plate_number ?? null,

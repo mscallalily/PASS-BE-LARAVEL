@@ -16,15 +16,30 @@ use App\Http\Controllers\Api\RfidReaderController;
 use App\Http\Controllers\Api\AccessEventController;
 use App\Http\Controllers\Api\VisitorAccessController;
 use App\Http\Controllers\Api\DeviceSimulatorController;
+use App\Http\Controllers\Api\GuestAccountController;
+use App\Http\Controllers\Api\SyncController;
 use App\Http\Controllers\Api\AdminDashboardController;
+use App\Http\Controllers\Api\AuditLogController;
+use App\Http\Controllers\Api\SystemSettingsController;
+use App\Http\Controllers\Api\ParkingSlotSimulationController;
+
+
 
 Route::get('/departments', [DepartmentController::class, 'index']);
 
-Route::post('/register', [AuthController::class, 'register']);
+Route::get('/registration/options', [\App\Http\Controllers\Api\RegistrationIdController::class, 'options']);
+Route::post('/registration/id-check', [\App\Http\Controllers\Api\RegistrationIdController::class, 'check'])->middleware('throttle:registration-id-read');
+Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:regular-registration');
+
+// Guest (visitor) self-registration.
+Route::post('/guest/register', [GuestAccountController::class, 'register'])
+    ->middleware('throttle:5,1');
 
 // Registered RFID gate readers authenticate with X-Reader-Code / X-Reader-Key.
 Route::post('/devices/rfid/scan', [RfidReaderController::class, 'scan'])
     ->middleware('throttle:120,1');
+
+Route::post('/email/verify-code', \App\Http\Controllers\Api\VerifyEmailCodeController::class)->middleware('throttle:10,1');
 
 // Email verification
 Route::get(
@@ -50,34 +65,36 @@ Route::post('/reset-password', [AuthController::class, 'resetPassword'])
     ->middleware('throttle:5,1');
 
 // Authenticated routes
-Route::middleware('auth:sanctum')->group(function () {
-    Route::post(
-    '/admin/system-settings/logo',
-    [\App\Http\Controllers\Api\SystemSettingsController::class, 'uploadLogo']
-);
-    
-    // Parking Slot Simulation
+Route::middleware(['auth:sanctum', \App\Http\Middleware\AccountAccess::class])->group(function () {
+    Route::post('/vehicles/read-photo', \App\Http\Controllers\Api\VehiclePhotoReadController::class)->middleware('throttle:vehicle-photo-read');
     Route::get(
-        '/admin/parking/slots',
-        [\App\Http\Controllers\Api\ParkingSlotSimulationController::class, 'index']
-    );
+    '/vehicles/{id}/photo',
+    [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'photo']
+)->whereNumber('id');
+
+Route::post(
+    '/vehicles/{id}/photo',
+    [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'uploadPhoto']
+)->whereNumber('id');
 
     Route::patch(
-        '/admin/parking/slots',
-        [\App\Http\Controllers\Api\ParkingSlotSimulationController::class, 'update']
-    );
+    '/vehicles/authorizations/{id}/review',
+    [\App\Http\Controllers\Api\VehicleAuthorizationController::class, 'review']
+)->whereNumber('id');
+    Route::get(
+    '/vehicles',
+    [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'index']
+);
 
-    Route::get('/admin/system-settings', [
-    \App\Http\Controllers\Api\SystemSettingsController::class,
-    'index'
-]);
-
-Route::put('/admin/system-settings', [
-    \App\Http\Controllers\Api\SystemSettingsController::class,
-    'update'
-]);
+Route::post(
+    '/vehicles',
+    [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'store']
+);
+    Route::get('/admin/users/{id}/school-id', [UserManagementController::class, 'schoolId'])->whereNumber('id');
     Route::get('/me', [AuthController::class, 'me']);
 
+    // Change markers for the shared frontend refresh (polled every few seconds while a tab is visible).
+    Route::get('/sync/revision', [SyncController::class, 'revision'])->middleware('throttle:120,1');
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/parking/dashboard', [ParkingDashboardController::class, 'index']);
     Route::get('/vehicles/authorizations', [VehicleAuthorizationController::class, 'index']);
@@ -86,27 +103,24 @@ Route::put('/admin/system-settings', [
         ->whereNumber('id');
     Route::patch('/vehicles/authorizations/{id}/lift-suspension', [VehicleAuthorizationController::class, 'liftSuspension'])
         ->whereNumber('id');
-    Route::get('/admin/audit-logs', [
-    \App\Http\Controllers\Api\AuditLogController::class,
-    'index'
-]);
 
     // Driver's license submissions (separate from vehicle authorization and RFID).
     Route::get('/licenses', [DriverLicenseController::class, 'index']);
     Route::get('/licenses/mine', [DriverLicenseController::class, 'mine']);
     Route::post('/licenses', [DriverLicenseController::class, 'submit'])
-        ->middleware('throttle:10,1');
+        ->middleware('throttle:license-submit');
     Route::get('/licenses/{id}/file', [DriverLicenseController::class, 'file'])
         ->whereNumber('id');
     Route::patch('/licenses/{id}/review', [DriverLicenseController::class, 'review'])
         ->whereNumber('id');
     Route::post('/licenses/{id}/recheck', [DriverLicenseController::class, 'recheck'])
-        ->whereNumber('id');
+        ->whereNumber('id')->middleware('throttle:license-recheck');
 
     // Parking operations: two parking areas, slot assignment, occupancy.
     Route::prefix('parking')->group(function () {
         Route::get('/overview', [ParkingOperationsController::class, 'overview']);
         Route::get('/availability', [ParkingOperationsController::class, 'availability']);
+        Route::get('/availability-map', [ParkingOperationsController::class, 'availabilityMap']);
         Route::get('/my-session', [ParkingOperationsController::class, 'mySession']);
         Route::get('/areas/{areaId}/slots', [ParkingOperationsController::class, 'slots'])->whereNumber('areaId');
         Route::get('/map', [ParkingOperationsController::class, 'map']);
@@ -120,6 +134,9 @@ Route::put('/admin/system-settings', [
     // Gate access records (read-only) and RFID credentials.
     Route::get('/access-events', [AccessEventController::class, 'index']);
     Route::get('/rfid/assignments', [AccessEventController::class, 'rfidAssignments']);
+    Route::post('/rfid/assignments', [\App\Http\Controllers\Api\RfidAssignmentController::class, 'store'])->middleware('throttle:20,1');
+    Route::patch('/rfid/assignments/{id}/revoke', [\App\Http\Controllers\Api\RfidAssignmentController::class, 'revoke'])->whereNumber('id');
+
 
     // Visitor registration, requests, approval and Visitor QR passes.
     Route::prefix('visitors')->group(function () {
@@ -131,6 +148,29 @@ Route::put('/admin/system-settings', [
         Route::get('/passes', [VisitorAccessController::class, 'passes']);
         Route::get('/passes/lookup', [VisitorAccessController::class, 'lookup']);
         Route::post('/passes/{id}/revoke', [VisitorAccessController::class, 'revoke'])->whereNumber('id');
+    });
+
+    Route::post('/visitors/requests/{id}/document-check', [\App\Http\Controllers\Api\VisitorRequestDocumentController::class, 'check'])->whereNumber('id')->middleware('throttle:6,1,visitor-document-check:');
+
+    Route::get('/visitors/requests/{id}/documents/{kind}', [\App\Http\Controllers\Api\VisitorRequestDocumentController::class, 'show'])->whereNumber('id')->whereIn('kind', ['license', 'vehicle']);
+
+    Route::post('/vehicles/{id}/select-for-use', [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'selectForUse'])->whereNumber('id');
+
+    Route::get('/vehicle-releases', [\App\Http\Controllers\Api\VehicleReleaseController::class, 'index']);
+    Route::post('/vehicle-releases', [\App\Http\Controllers\Api\VehicleReleaseController::class, 'store'])->middleware('throttle:10,1,vehicle-release:');
+    Route::post('/vehicle-releases/{id}/action', [\App\Http\Controllers\Api\VehicleReleaseController::class, 'act'])->whereNumber('id');
+
+    // Guest (visitor) account: own profile, vehicles, requests, passes and visits only.
+    Route::prefix('guest')->group(function () {
+        Route::get('/profile', [GuestAccountController::class, 'profile']);
+        Route::patch('/profile', [GuestAccountController::class, 'updateProfile']);
+        Route::get('/vehicles', [GuestAccountController::class, 'vehicles']);
+        Route::post('/vehicles', [GuestAccountController::class, 'storeVehicle'])->middleware('throttle:20,1');
+        Route::get('/requests', [GuestAccountController::class, 'requests']);
+        Route::post('/requests', [GuestAccountController::class, 'storeRequest'])->middleware('throttle:20,1');
+        Route::post('/requests/{id}/cancel', [GuestAccountController::class, 'cancelRequest'])->whereNumber('id');
+        Route::get('/passes', [GuestAccountController::class, 'passes']);
+        Route::get('/visits', [GuestAccountController::class, 'visits']);
     });
 
     // Development-only gate simulator (config/pass.php); 404 unless enabled for the tester.
@@ -149,10 +189,19 @@ Route::put('/admin/system-settings', [
 
     // Admin user management
     Route::prefix('admin')->group(function () {
+        Route::get('/reports', [\App\Http\Controllers\Api\AdminReportController::class, 'index']);
+        Route::get('/reports/export', [\App\Http\Controllers\Api\AdminReportController::class, 'export'])->middleware('throttle:10,1,admin-report-export:');
         Route::get('/dashboard', [AdminDashboardController::class, 'index']);
+        Route::get('/parking/occupancy', [AdminDashboardController::class, 'occupancy']);
+        Route::get('/audit-logs', [AuditLogController::class, 'index']);
+        Route::get('/system-settings', [SystemSettingsController::class, 'index']);
+        Route::put('/system-settings', [SystemSettingsController::class, 'update']);
+        Route::post('/system-settings/logo', [SystemSettingsController::class, 'uploadLogo']);
+        // Separate development slot simulation; not parking transaction occupancy.
+        Route::get('/parking/slots', [ParkingSlotSimulationController::class, 'index']);
+        Route::patch('/parking/slots', [ParkingSlotSimulationController::class, 'update']);
 
         Route::get('/users', [UserManagementController::class, 'index']);
-        
 
         Route::patch(
             '/users/{id}/approve',

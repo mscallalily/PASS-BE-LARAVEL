@@ -77,13 +77,16 @@ class UserManagementController extends Controller
                 'id' => (string) $user->user_id,
                 'name' => trim(
                     ($profile?->first_name ?? '') . ' ' .
-                    ($profile?->last_name ?? '')
+                    ($profile?->last_name ?? '') . ' ' . ($profile?->suffix ?? '')
                 ),
                 'email' => $user->email,
                 'idNum' => $user->user_code,
                 'role' => $user->roles->first()?->role_code,
                 'userType' => $user->user_type,
-                'dept' => $profile?->department?->department_name,
+                'dept' => $profile?->registration_unit ?: $profile?->department?->department_name,
+                'registrationCategory' => $profile?->registration_category,
+                'schoolIdCheck' => $profile?->school_id_check_result,
+                'schoolIdSubmitted' => (bool) $profile?->school_id_document_path,
                 'contact' => $profile?->contact_number,
                 'status' => $user->account_status,
                 'registered' => $user->created_at,
@@ -93,6 +96,16 @@ class UserManagementController extends Controller
         return response()->json([
             'users' => $users,
         ]);
+    }
+
+    public function schoolId(Request $request, int $id)
+    {
+        if (!$request->user() || !$this->canManageUsers($request->user())) return response()->json(['message'=>'Unauthorized access.'], 403);
+        $user = User::with('profile')->findOrFail($id);
+        $path = $user->profile?->school_id_document_path;
+        $disk = \Illuminate\Support\Facades\Storage::disk('private');
+        if (!$path || !$disk->exists($path)) return response()->json(['message'=>'ID document not found.'], 404);
+        return $disk->response($path, 'institutional-id.'.pathinfo($path, PATHINFO_EXTENSION), ['Cache-Control'=>'no-store, private', 'X-Content-Type-Options'=>'nosniff'], 'inline');
     }
 
     /**
@@ -116,8 +129,12 @@ class UserManagementController extends Controller
             ], 409);
         }
 
-        $user->account_status = 'active';
-        $user->save();
+        \Illuminate\Support\Facades\DB::transaction(function () use ($user, $request, $actor) {
+            $before = ['account_status' => $user->account_status];
+            $user->account_status = 'active';
+            $user->save();
+            \App\Support\ActivityAudit::record($request, $actor, 'account_approved', 'users', (int) $user->user_id, $before, ['account_status' => $user->account_status]);
+        });
 
         return response()->json([
             'message' => 'User account approved successfully.',
@@ -150,8 +167,12 @@ class UserManagementController extends Controller
         }
 
         // The database enum has no "rejected" value.
-        $user->account_status = 'deactivated';
-        $user->save();
+        \Illuminate\Support\Facades\DB::transaction(function () use ($user, $request, $actor) {
+            $before = ['account_status' => $user->account_status];
+            $user->account_status = 'deactivated';
+            $user->save();
+            \App\Support\ActivityAudit::record($request, $actor, 'account_rejected', 'users', (int) $user->user_id, $before, ['account_status' => $user->account_status]);
+        });
 
         return response()->json([
             'message' => 'Account rejected and deactivated.',

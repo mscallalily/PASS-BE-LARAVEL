@@ -1,0 +1,310 @@
+<?php
+
+namespace Tests\Feature\Parking;
+
+use App\Services\Parking\ParkingLayoutUpdater;
+use App\Support\ParkingMapLayout;
+use Illuminate\Support\Facades\DB;
+
+class ParkingMeasurementLayoutTest extends ParkingTestCase
+{
+    public function test_metric_parcels_retain_owner_dimensions_and_proposal_limits(): void
+    {
+        $g = ParkingMapLayout::geometry(true);
+        $unit = $g['measurement_basis']['units_per_metre'];
+        $mc = $g['areas'][0]['polygon'];
+        $this->assertEqualsWithDelta(30.96, $this->distance($mc[0], $mc[1]) / $unit, 0.00001);
+        $this->assertEqualsWithDelta(8.8, $this->distance($mc[1], $mc[2]) / $unit, 0.00001);
+        $road = $g['road']['polygon'];
+        $this->assertEqualsWithDelta(3.06, $this->distance($road[1], $road[2]) / $unit, 0.00001);
+        $this->assertSame([69, 114], $g['gate']['at']);
+        $this->assertSame(-21, $g['gate']['angle']);
+        $this->assertSame('alternating', $g['road']['traffic']);
+        $car = $g['areas'][1]['polygon'];
+        foreach ([18.42, 12.04, 2.60, 20.18, 33.37, 8.80, 3.36, 4.66, 49.26] as $i => $length) {
+            $this->assertEqualsWithDelta($length, $this->distance($car[$i], $car[($i + 1) % 9]) / $unit, 0.00001);
+        }
+        $this->assertEqualsWithDelta($mc[2][0], $car[5][0], 0.00001);
+        $this->assertEqualsWithDelta($mc[2][1], $car[5][1], 0.00001);
+        $this->assertEqualsWithDelta($mc[1][0], $car[6][0], 0.00001);
+        $this->assertEqualsWithDelta($mc[1][1], $car[6][1], 0.00001);
+        $this->assertSame([18.42, 12.04, 2.60, 20.18, 33.37, 49.26], $g['measurement_basis']['car_edges_m']);
+        $this->assertSame(4.66, $g['measurement_basis']['boundary_assumptions']['estimated_nw_return_m']);
+        $this->assertSame(2.6, $g['measurement_basis']['boundary_assumptions']['lower_pink_opening_m']);
+        $this->assertStringContainsString('estimated', $g['measurement_basis']['boundary_note']);
+        $this->assertCount(129, ParkingMapLayout::slotPositions(true));
+        $this->assertSame(['motorcycle_configured' => 84, 'motorcycle_drawn' => 84, 'car_configured' => 55, 'car_drawn' => 45], $g['measurement_basis']['inventory']);
+        $this->assertFalse($g['measurement_basis']['survey_verified']);
+        $this->assertStringContainsString('not a maximum-capacity', $g['measurement_basis']['car_proposal']);
+        $this->assertStringContainsString('walk/push', $g['measurement_basis']['motorcycle_proposal']);
+        $this->assertSame([], $g['trays']);
+        $this->assertNotContains('160.00 m', array_column($g['dimensions'], 'text'));
+    }
+
+    public function test_bays_are_inside_parcels_without_overlapping_other_bays_aisles_or_the_road(): void
+    {
+        $g = ParkingMapLayout::geometry(true);
+        $positions = ParkingMapLayout::slotPositions(true);
+        $this->assertCount(84, array_filter($positions, fn ($b) => $b['area'] === 'MC'));
+        $this->assertCount(45, array_filter($positions, fn ($b) => $b['area'] === 'CAR'));
+        foreach (range(1, 84) as $i) {
+            $this->assertArrayHasKey(sprintf('M-%02d', $i), $positions);
+        }
+        $polygons = [];
+        foreach ($positions as $code => $bay) {
+            $this->assertSame('proposed', $bay['placement_basis']);
+            $this->assertEqualsWithDelta($bay['area'] === 'MC' ? 1 : ($bay['pwd'] ? 4 : ($bay['w'] > $bay['h'] ? 6 : 2.5)), $bay['w'] / 8, 0.00001);
+            $this->assertEqualsWithDelta($bay['area'] === 'MC' ? 2 : ($bay['w'] > $bay['h'] ? 2.15 : 5), $bay['h'] / 8, 0.00001);
+            $poly = $this->corners($bay);
+            $parcel = $g['areas'][$bay['area'] === 'MC' ? 0 : 1]['polygon'];
+            // Sample the whole perimeter: concave notches cannot be bridged by a bay.
+            foreach ($poly as $i => $a) {
+                $b = $poly[($i + 1) % 4];
+                foreach (range(0, 20) as $step) {
+                    $p = [$a[0] + ($b[0] - $a[0]) * $step / 20, $a[1] + ($b[1] - $a[1]) * $step / 20];
+                    $this->assertTrue($this->inside($p, $parcel), "$code must remain inside its parcel");
+                }
+            }
+            foreach (array_merge([$g['road']], $g['circulation']) as $ci => $clearance) {
+                $this->assertFalse($this->overlap($poly, $clearance['polygon']), "$code overlaps clearance $ci ".($clearance['kind'] ?? 'road'));
+            }
+            foreach ($polygons as $otherCode => $other) {
+                $this->assertFalse($this->overlap($poly, $other), "$code overlaps $otherCode");
+            }
+            $polygons[$code] = $poly;
+        }
+    }
+
+    public function test_complete_slot_diagram_places_all_55_car_codes_once_with_clear_symbols(): void
+    {
+        $positions = ParkingMapLayout::slotPositions();
+        $g = ParkingMapLayout::geometry();
+        $this->assertCount(139, $positions);
+        $this->assertSame('slot_diagram', $g['measurement_basis']['scale']);
+        $this->assertSame(55, $g['measurement_basis']['inventory']['car_drawn']);
+        $this->assertSame('metric_proposal', ParkingMapLayout::measuredLayout()['geometry']['measurement_basis']['scale']);
+        $polygons = [];
+        foreach (range(1, 55) as $number) {
+            $code = sprintf('C-%02d', $number);
+            $this->assertArrayHasKey($code, $positions);
+            $bay = $positions[$code];
+            $this->assertSame($number, $bay['slot_number']);
+            $this->assertSame('diagram', $bay['placement_basis']);
+            $poly = $this->corners($bay);
+            foreach ($poly as $p) {
+                $this->assertTrue($this->inside($p, $g['areas'][1]['polygon']), "$code symbol outside the car parcel");
+            }
+            foreach ($g['circulation'] as $clearance) {
+                $this->assertFalse($this->overlap($poly, $clearance['polygon']), "$code symbol overlaps a displayed aisle");
+            }
+            foreach ($polygons as $other) {
+                $this->assertFalse($this->overlap($poly, $other), "$code symbol overlaps another symbol");
+            }
+            $polygons[$code] = $poly;
+        }
+    }
+
+    public function test_mixed_rows_add_bays_without_blocking_frontages_or_shared_approach(): void
+    {
+        $g = ParkingMapLayout::geometry(true);
+        $bays = array_filter(ParkingMapLayout::bays(true), fn ($bay) => $bay['area'] === 'CAR');
+        $counts = array_count_values(array_column($bays, 'row'));
+        $this->assertSame(18, $counts['North perimeter']);
+        $this->assertSame(15, $counts['Interior row A']);
+        $this->assertSame(4, $counts['South row']);
+        $this->assertSame(8, $counts['Interior row B']);
+        $this->assertSame('/references/dyci-marked-lineup-20261018.png', $g['measurement_basis']['lineup_source_image']);
+        $this->assertSame(0, count(array_filter($bays, fn ($bay) => $bay['pwd'])));
+        $this->assertSame(45, count(array_filter($g['circulation'], fn ($c) => (float) ($c['width_m'] ?? 0) === 4.5)));
+        $this->assertSame(0, count(array_filter($g['circulation'], fn ($c) => $c['kind'] === 'parallel_aisle')));
+        $this->assertSame([], array_keys(array_filter(ParkingMapLayout::slotPositions(true), fn ($bay) => $bay['area'] === 'CAR' && $bay['w'] > $bay['h'])));
+        $this->assertSame(55, $g['measurement_basis']['capacity_review']['reported_car_capacity']);
+        $this->assertSame(10, $g['measurement_basis']['capacity_review']['unresolved_car_positions']);
+        foreach (array_filter($g['circulation'], fn ($c) => in_array($c['kind'], ['car_aisle', 'parallel_aisle', 'walkway'])) as $clearance) {
+            foreach ($clearance['polygon'] as $i => $from) {
+                $to = $clearance['polygon'][($i + 1) % 4];
+                foreach (range(0, 20) as $step) {
+                    $point = [$from[0] + ($to[0] - $from[0]) * $step / 20, $from[1] + ($to[1] - $from[1]) * $step / 20];
+                    $this->assertTrue($this->inside($point, $g['areas'][1]['polygon']), 'Frontage must remain inside the car parcel');
+                }
+            }
+        }
+        $this->assertCount(3, array_filter($g['circulation'], fn ($c) => $c['kind'] === 'car_approach' && $c['width_m'] === 3.06));
+        $this->assertFalse($g['measurement_basis']['vehicle_measurements']['car_mirrors_included']);
+        $this->assertSame(2.0447, $g['measurement_basis']['vehicle_measurements']['car_width_m']);
+        foreach ($g['lanes'] as $lane) {
+            foreach (array_slice($lane['points'], 0, -1) as $i => $from) {
+                $to = $lane['points'][$i + 1];
+                foreach (range(0, 20) as $step) {
+                    $p = [$from[0] + ($to[0] - $from[0]) * $step / 20, $from[1] + ($to[1] - $from[1]) * $step / 20];
+                    foreach ($bays as $bay) {
+                        $this->assertFalse($this->inside($p, $this->corners($bay)), 'Flow arrows must not cross a car bay');
+                    }
+                }
+            }
+        }
+        foreach ($bays as $bay) {
+            $this->assertFalse($this->overlap($this->corners($bay), $g['connector']['polygon']), 'No bay may block the shared entry/exit connector');
+        }
+    }
+
+    public function test_every_car_frontage_connects_to_the_shared_approach_with_a_clear_envelope(): void
+    {
+        $g = ParkingMapLayout::geometry(true);
+        $local = function (array $p): array {
+            $r = deg2rad(10);
+            $x = ($p[0] - ParkingMapLayout::CAR_ORIGIN[0]) / 8;
+            $y = ($p[1] - ParkingMapLayout::CAR_ORIGIN[1]) / 8;
+
+            return [$x * cos($r) + $y * sin($r), -$x * sin($r) + $y * cos($r)];
+        };
+        $parcel = array_map($local, $g['areas'][1]['polygon']);
+        $obstacles = [];
+        foreach (ParkingMapLayout::bays(true) as $bay) {
+            if ($bay['area'] === 'CAR') {
+                $obstacles[] = array_map($local, $this->corners($bay));
+            }
+        }
+        foreach ($g['circulation'] as $c) {
+            if ($c['kind'] === 'walkway') {
+                $obstacles[] = array_map($local, $c['polygon']);
+            }
+        }
+        $bounds = array_map(fn ($poly) => [min(array_column($poly, 0)), max(array_column($poly, 0)), min(array_column($poly, 1)), max(array_column($poly, 1))], $obstacles);
+        // 0.25m grid, with 1.60m edge clearance: a conservative nominal 3.06m
+        // connection check, not a vehicle turning or swept-path calculation.
+        $free = [];
+        foreach (range(-16, 220) as $ix) {
+            foreach (range(-4, 140) as $iy) {
+                $p = [$ix / 4, $iy / 4];
+                if (! $this->inside($p, $parcel) || $this->edgeDistance($p, $parcel) < 1.60) {
+                    continue;
+                }
+                foreach ($obstacles as $i => $obstacle) {
+                    [$left, $right, $top, $bottom] = $bounds[$i];
+                    if ($p[0] < $left - 1.60 || $p[0] > $right + 1.60 || $p[1] < $top - 1.60 || $p[1] > $bottom + 1.60) {
+                        continue;
+                    }
+                    if ($this->inside($p, $obstacle) || $this->edgeDistance($p, $obstacle) < 1.60) {
+                        continue 2;
+                    }
+                }
+                $free["$ix,$iy"] = $p;
+            }
+        }
+        $start = '36,34'; // (9.00m, 8.50m), inside the reserved approach.
+        $this->assertArrayHasKey($start, $free);
+        $queue = [$start];
+        $visited = [$start => $free[$start]];
+        for ($i = 0; $i < count($queue); $i++) {
+            [$ix, $iy] = array_map('intval', explode(',', $queue[$i]));
+            foreach ([[0, 1], [0, -1], [1, 0], [-1, 0]] as [$dx, $dy]) {
+                $key = ($ix + $dx).','.($iy + $dy);
+                if (isset($free[$key]) && ! isset($visited[$key])) {
+                    $visited[$key] = $free[$key];
+                    $queue[] = $key;
+                }
+            }
+        }
+        foreach (array_filter($g['circulation'], fn ($c) => in_array($c['kind'], ['car_aisle', 'parallel_aisle'])) as $i => $frontage) {
+            $polygon = array_map($local, $frontage['polygon']);
+            $connected = false;
+            foreach ($visited as $point) {
+                if ($this->inside($point, $polygon)) {
+                    $connected = true;
+                    break;
+                }
+            }
+            $this->assertTrue($connected, "Car frontage $i must connect to the shared approach");
+        }
+    }
+
+    private function edgeDistance(array $p, array $polygon): float
+    {
+        $distance = INF;
+        foreach ($polygon as $i => $a) {
+            $b = $polygon[($i + 1) % count($polygon)];
+            $dx = $b[0] - $a[0];
+            $dy = $b[1] - $a[1];
+            $t = max(0, min(1, (($p[0] - $a[0]) * $dx + ($p[1] - $a[1]) * $dy) / ($dx * $dx + $dy * $dy)));
+            $distance = min($distance, hypot($p[0] - $a[0] - $t * $dx, $p[1] - $a[1] - $t * $dy));
+        }
+
+        return $distance;
+    }
+
+    private function distance(array $a, array $b): float
+    {
+        return hypot($b[0] - $a[0], $b[1] - $a[1]);
+    }
+
+    private function corners(array $b): array
+    {
+        $r = deg2rad($b['rotation']);
+
+        return array_map(fn ($p) => [$b['x'] + $p[0] * cos($r) - $p[1] * sin($r), $b['y'] + $p[0] * sin($r) + $p[1] * cos($r)], [[-$b['w'] / 2, -$b['h'] / 2], [$b['w'] / 2, -$b['h'] / 2], [$b['w'] / 2, $b['h'] / 2], [-$b['w'] / 2, $b['h'] / 2]]);
+    }
+
+    private function inside(array $p, array $poly): bool
+    {
+        $inside = false;
+        foreach ($poly as $i => $a) {
+            $b = $poly[($i + 1) % count($poly)];
+            $dx = $b[0] - $a[0];
+            $dy = $b[1] - $a[1];
+            $t = max(0, min(1, (($p[0] - $a[0]) * $dx + ($p[1] - $a[1]) * $dy) / ($dx * $dx + $dy * $dy)));
+            if (hypot($p[0] - $a[0] - $t * $dx, $p[1] - $a[1] - $t * $dy) < 0.005) {
+                return true;
+            }
+            if (($a[1] > $p[1]) !== ($b[1] > $p[1]) && $p[0] < ($b[0] - $a[0]) * ($p[1] - $a[1]) / ($b[1] - $a[1]) + $a[0]) {
+                $inside = ! $inside;
+            }
+        }
+
+        return $inside;
+    }
+
+    /** Separating-axis test for two convex polygons; touching edges are allowed. */
+    private function overlap(array $a, array $b): bool
+    {
+        foreach ([$a, $b] as $poly) {
+            foreach ($poly as $i => $p) {
+                $q = $poly[($i + 1) % count($poly)];
+                $length = $this->distance($p, $q);
+                $axis = [-($q[1] - $p[1]) / $length, ($q[0] - $p[0]) / $length];
+                $pa = array_map(fn ($v) => $v[0] * $axis[0] + $v[1] * $axis[1], $a);
+                $pb = array_map(fn ($v) => $v[0] * $axis[0] + $v[1] * $axis[1], $b);
+                if (min(max($pa), max($pb)) - max(min($pa), min($pb)) <= 0.01) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    public function test_coordinate_refresh_is_idempotent_and_preserves_sessions_status_capacity_and_gate_state(): void
+    {
+        $this->actingAsStaff();
+        $car = $this->campusVehicle();
+        $entry = $this->gate('entry', ['rfid_tag_uid' => $car['tag']]);
+        $before = $this->activeTransaction($car['vehicle_id']);
+        DB::table('parking_slots')->where('slot_code', 'M-23')->update(['slot_status' => 'maintenance', 'pos_x' => null, 'pos_y' => null]);
+        DB::table('parking_slots')->where('slot_code', 'C-42')->update(['is_pwd_slot' => true]);
+        DB::table('access_gates')->update(['gate_status' => 'offline']);
+        $this->assertGreaterThan(0, app(ParkingLayoutUpdater::class)->apply());
+        $this->assertSame(0, app(ParkingLayoutUpdater::class)->apply());
+        $this->assertEquals($before, $this->activeTransaction($car['vehicle_id']));
+        $this->assertSame(139, DB::table('parking_slots')->count());
+        $this->assertFalse((bool) DB::table('parking_slots')->where('slot_code', 'C-42')->value('is_pwd_slot'));
+        $this->assertSame('maintenance', DB::table('parking_slots')->where('slot_code', 'M-23')->value('slot_status'));
+        $this->assertSame('offline', DB::table('access_gates')->value('gate_status'));
+        $map = $this->getJson('/api/parking/map')->assertOk()->json();
+        $restored = collect($map['slots'])->firstWhere('slot_code', 'M-23');
+        $this->assertTrue($restored['placed']);
+        $this->assertSame('maintenance', $restored['status']);
+        $this->assertSame(55, collect($map['slots'])->where('area_code', 'CAR')->where('placed', true)->count());
+        $this->assertSame(84, collect($map['slots'])->where('area_code', 'MC')->where('placed', true)->count());
+        $this->assertSame($entry['slot_id'], $this->activeTransaction($car['vehicle_id'])->slot_id);
+    }
+}

@@ -3,10 +3,8 @@
 namespace App\Notifications;
 
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
-use Illuminate\Support\Facades\URL;
 
 class PassEmailVerificationNotification extends Notification
 {
@@ -17,25 +15,22 @@ class PassEmailVerificationNotification extends Notification
         return ['mail'];
     }
 
+    public function __construct(public readonly string $code)
+    {
+    }
+
     public function toMail(object $notifiable): MailMessage
     {
-        $verificationUrl = URL::temporarySignedRoute(
-            'verification.verify',
-            now()->addMinutes(60),
-            [
-                'id' => $notifiable->getKey(),
-                'hash' => sha1($notifiable->getEmailForVerification()),
-            ]
-        );
-
         return (new MailMessage)
-            ->subject('Verify Your PASS Email Address')
+            ->subject('Your PASS Email Verification Code')
             ->greeting('Hello!')
-            ->line('Thank you for registering for the Parking Access and Space Management System (PASS).')
-            ->line('Please verify your email address by clicking the button below.')
-            ->action('Verify Email Address', $verificationUrl)
-            ->line('This verification link will expire in 60 minutes.')
-            ->line('Email verification does not mean your account is approved. Your account remains pending until reviewed by the PASS administrator.')
-            ->line('If you did not register for PASS, you may ignore this email.');
+            ->line('Enter this 6-digit code on the PASS Verify email page:')
+            ->line($this->code)
+            ->line('This code expires in 10 minutes. Requesting another code replaces this one.')
+            ->line('Do not share this code with anyone.')
+            ->line($notifiable->isGuest()
+                ? 'After verification, sign in to submit your visitor request. A QR pass requires request approval.'
+                : 'Email verification does not approve your account. Administrator approval is still required.')
+            ->line('If you did not request this code, you can ignore this email.');
     }
 }

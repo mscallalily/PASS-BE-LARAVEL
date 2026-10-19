@@ -3,20 +3,24 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Services\Parking\ParkingStats;
+use App\Support\CampusTime;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class AdminDashboardController extends Controller
 {
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
+        abort_unless($request->user()?->isAdmin(), 403);
         $totalTags = DB::table('rfid_tags')->count();
 
         $assignedTags = DB::table('rfid_tags')
             ->where('tag_status', 'assigned')
             ->count();
 
-        $today = now()->toDateString();
+        [$start, $end] = CampusTime::dayRange();
 
         return response()->json([
             'summary' => [
@@ -46,15 +50,31 @@ class AdminDashboardController extends Controller
 
             'today_activity' => [
                 'entries' => DB::table('parking_transactions')
-                    ->whereDate('entry_datetime', $today)
+                    ->where('entry_datetime', '>=', $start)->where('entry_datetime', '<', $end)
+                    ->where('transaction_status', '<>', 'cancelled')
                     ->count(),
 
                 'exits' => DB::table('parking_transactions')
-                    ->whereDate('exit_datetime', $today)
+                    ->where('exit_datetime', '>=', $start)->where('exit_datetime', '<', $end)
+                    ->whereIn('transaction_status', ['completed', 'force_closed'])
                     ->count(),
             ],
 
-            'parking_occupancy' => [],
+            'parking_occupancy' => $this->occupancyRows(),
         ]);
+    }
+    public function occupancy(Request $request): JsonResponse
+    {
+        abort_unless($request->user()?->isAdmin(), 403);
+        $areas = ParkingStats::areas();
+        return response()->json(['data' => $this->occupancyRows(), 'overall' => ParkingStats::overall($areas)]);
+    }
+
+    private function occupancyRows(): array
+    {
+        return array_values(array_map(fn ($area) => [
+            'zone_id' => $area['parking_area_id'], 'zone' => $area['area_name'],
+            'capacity' => $area['capacity'], 'occupied' => $area['occupied'], 'available' => $area['available'],
+        ], ParkingStats::areas()));
     }
 }

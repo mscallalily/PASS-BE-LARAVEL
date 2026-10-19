@@ -53,7 +53,7 @@ class ParkingAccessService
         $at = $context['at'] ?? CarbonImmutable::now();
 
         // Identify outside the transaction: under REPEATABLE READ the first
-        // plain read fixes the snapshot, so the area lock must come first.
+        // plain read fixes the snapshot, so owner and area locks must come first.
         $id = $this->identify($credential);
 
         $reason = $id['error']
@@ -93,8 +93,17 @@ class ParkingAccessService
         $vehicle = $id['vehicle'];
         $areaId = $vehicle->area_id;
 
-        // First statement of the transaction: serializes entries per area,
-        // and every read after it sees the latest committed slot usage.
+        // Serialize this owner's entries across BOTH parking areas before
+        // taking the area lock. Locking reads do not establish an old snapshot.
+        $visitor = $vehicle->owner_visitor_id
+            ? DB::table('visitors')->where('visitor_id', $vehicle->owner_visitor_id)->lockForUpdate()->first()
+            : null;
+        $ownerUserId = $vehicle->owner_user_id ?: ($visitor->user_id ?? null);
+        if ($ownerUserId) {
+            DB::table('users')->where('user_id', $ownerUserId)->lockForUpdate()->first();
+        }
+
+        // Serialize slot allocation within the selected area.
         $area = DB::table('parking_areas')->where('parking_area_id', $areaId)->lockForUpdate()->first();
 
         $active = DB::table('parking_transactions')
@@ -110,6 +119,23 @@ class ParkingAccessService
                 'message' => "{$vehicle->plate_number} is already inside (slot " . ($this->slotCode($active->slot_id) ?? 'none') . ').',
                 'transaction_id' => $active->transaction_id,
             ] + $this->slotInfo($active->slot_id);
+        }
+
+        $otherVehicle = DB::table('parking_transactions as t')
+            ->join('vehicles as v', 'v.vehicle_id', '=', 't.vehicle_id')
+            ->leftJoin('visitors as visitor', 'visitor.visitor_id', '=', 'v.owner_visitor_id')
+            ->where('t.transaction_status', 'active')
+            ->where('t.vehicle_id', '!=', $vehicle->vehicle_id)
+            ->where(function ($query) use ($ownerUserId, $vehicle) {
+                if ($ownerUserId) {
+                    $query->where('v.owner_user_id', $ownerUserId)->orWhere('visitor.user_id', $ownerUserId);
+                } else {
+                    $query->where('v.owner_visitor_id', $vehicle->owner_visitor_id);
+                }
+            })
+            ->lockForUpdate()->first(['t.transaction_id']);
+        if ($otherVehicle) {
+            return $this->deny($id, 'Another vehicle under this account is still inside. Record its exit before entering with a different vehicle.', 'in', $actor, $context, $at);
         }
 
         if ($reason = $this->entryDenialReason($id, $area, $at)) {
@@ -200,6 +226,13 @@ class ParkingAccessService
             if (!$transaction) {
                 // A repeated exit scan must not close anything twice.
                 return ['status' => 'not_inside', 'message' => "{$vehicle->plate_number} has no active parking session."];
+            }
+
+            $release = DB::table('vehicle_release_requests')->where('transaction_id', $transaction->transaction_id)
+                ->whereIn('status', ['pending', 'approved'])->where('expires_at', '>', $at)
+                ->lockForUpdate()->first();
+            if ($release && ((int) ($context['emergency_release_id'] ?? 0) !== (int) $release->release_id || $release->status !== 'pending' || $release->exception_reason || (int) $release->requested_by !== (int) $release->owner_user_id)) {
+                return $this->deny($id, 'An emergency driver release is pending for this session. Complete the Emergency Vehicle Release process or cancel it before a regular exit.', 'out', $actor, $context, $at);
             }
 
             $eventId = $this->recordEvent($id, 'out', true, null, $actor, $context, $at, $transaction->parking_area_id);
@@ -474,6 +507,11 @@ class ParkingAccessService
                 return "Owner account is " . ($owner->account_status ?? 'missing') . '.';
             }
 
+            $selectedId = DB::table('user_vehicle_selections')->where('user_id', $vehicle->owner_user_id)->value('vehicle_id');
+            if ((int) $selectedId !== (int) $vehicle->vehicle_id) {
+                return 'This vehicle is inactive for entry. Select it using “Use this vehicle” in My Vehicles before arriving.';
+            }
+
             if ($id['assignment'] && (int) $id['assignment']->user_id !== (int) $vehicle->owner_user_id
                 && !DB::table('vehicle_driver as vd')->join('drivers as d', 'd.driver_id', '=', 'vd.driver_id')
                     ->where('vd.vehicle_id', $vehicle->vehicle_id)->where('d.user_id', $id['assignment']->user_id)->exists()) {
@@ -607,7 +645,7 @@ class ParkingAccessService
 
         return match (true) {
             $license->license_status !== 'valid' => "Driver's license is {$license->license_status}.",
-            $license->verification_status === 'pending_review' => "Driver's license is waiting for staff verification.",
+            $license->verification_status === 'pending_review' => "Driver's license check is unfinished; retry the automatic check or contact PASS staff.",
             $license->verification_status === 'needs_correction' => "Driver's license needs correction before it can be verified.",
             $license->verification_status !== 'verified' => "Driver's license is still being checked.",
             $license->expiry_date && $license->expiry_date < $today => "Driver's license expired on {$license->expiry_date}.",
@@ -630,9 +668,12 @@ class ParkingAccessService
 
     private function useQrPass(int $passId): void
     {
+        // MySQL applies SET assignments left to right, so pass_status must be
+        // computed before use_count changes (otherwise the entry scan of a
+        // two-use pass already marks it used).
         DB::table('qr_passes')->where('qr_pass_id', $passId)->update([
-            'use_count' => DB::raw('LEAST(use_count + 1, 255)'),
             'pass_status' => DB::raw("IF(use_count + 1 >= max_uses AND pass_status = 'active', 'used', pass_status)"),
+            'use_count' => DB::raw('LEAST(use_count + 1, 255)'),
             'updated_at' => now(),
         ]);
     }
@@ -691,12 +732,13 @@ class ParkingAccessService
 
         $eventId = $this->recordEvent($id, $direction, false, $reason, $actor, ['gate_id' => $gateId] + $context, $at, $vehicle->area_id ?? null);
 
+        $title = self::denialTitle($id, $reason, $direction);
         $this->afterCommit[] = fn () => ParkingNotifier::notifyStaff(
             'parking_access_denied',
-            "{$verb} denied",
+            $title,
             "{$verb} denied for {$label} at " . CampusTime::label($at) . ": {$reason}",
             'access_event', $eventId,
-            ['access_event_id' => $eventId, 'plate_number' => $vehicle->plate_number ?? null, 'reason' => $reason],
+            ['access_event_id' => $eventId, 'plate_number' => $vehicle->plate_number ?? null, 'reason' => $reason, 'method' => $id['method']],
             'vehicle:' . ($vehicle->vehicle_id ?? $id['credential']), 15
         );
 
@@ -707,6 +749,18 @@ class ParkingAccessService
             'access_event_id' => $eventId,
             'plate_number' => $vehicle->plate_number ?? null,
         ];
+    }
+
+    /** Staff alert title for a refused scan: what kind of problem it was. */
+    private static function denialTitle(array $id, string $reason, string $direction): string
+    {
+        return match (true) {
+            str_contains($reason, 'suspended') => 'Suspended vehicle entry attempt',
+            !$id['vehicle'] || str_contains($reason, 'not registered') || str_contains($reason, 'not linked') || str_contains($reason, 'Unknown') => 'Unauthorized vehicle',
+            $id['method'] === 'qr' => $direction === 'out' ? 'Denied visitor QR exit' : 'Denied visitor QR access',
+            $id['method'] === 'rfid' => $direction === 'out' ? 'Denied RFID exit' : 'Denied RFID access',
+            default => $direction === 'out' ? 'Exit denied' : 'Entry denied',
+        };
     }
 
     private function recordEvent(array $id, string $direction, bool $granted, ?string $reason, ?User $actor, array $context, CarbonImmutable $at, ?int $areaId): int
@@ -734,6 +788,7 @@ class ParkingAccessService
                 'staff_override' => $id['method'] === 'manual' ? true : null,
                 // Where the scan came from: staff gate screen, RFID reader, or the development simulator.
                 'source' => $context['source'] ?? null,
+                'emergency_release_id' => $context['emergency_release_id'] ?? null,
             ])),
             'processed_by_user_id' => $actor?->user_id,
             'created_at' => $at,

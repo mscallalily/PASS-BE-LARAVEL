@@ -75,11 +75,11 @@ class LicenseActivity
             ],
             'pending_review' => [
                 "Driver's license submitted for review",
-                'Your driver\'s license passed the preliminary document check and is waiting for review by PASS staff.',
+                $automatic ? 'The automatic document check could not complete. Your submission remains unapproved. Use Retry automatic check after the reading service is restored.' : 'Your license submission is awaiting a staff exception review.',
             ],
             'verified' => [
                 "Driver's license verified",
-                'PASS staff verified your driver\'s license. This does not by itself authorize a vehicle or assign an RFID.',
+                ($automatic ? 'Your license submission was approved automatically after the required OCR and document-consistency checks passed. ' : 'PASS staff approved your license submission. ').'This is not official LTO authenticity verification. Vehicle authorization and RFID assignment remain separate.',
             ],
             default => [null, null],
         };

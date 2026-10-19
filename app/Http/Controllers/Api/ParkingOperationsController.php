@@ -21,15 +21,23 @@ use Illuminate\Validation\Rule;
  */
 class ParkingOperationsController extends Controller
 {
-    public function __construct(private ParkingAccessService $access)
-    {
-    }
+    public function __construct(private ParkingAccessService $access) {}
 
     private function forbidden(Request $request): ?JsonResponse
     {
         return $request->user()->canManageParking()
             ? null
             : response()->json(['message' => 'Only Parking Staff and administrators can access parking operations.'], 403);
+    }
+
+    /** Day-to-day layout mutations belong to Parking Staff; admins monitor only. */
+    private function operationForbidden(Request $request): ?JsonResponse
+    {
+        $user = $request->user();
+
+        return $user->canManageParking() && ! $user->isAdmin()
+            ? null
+            : response()->json(['message' => 'Only Parking Staff can record gate movements or update parking slots. Administrators have read-only parking access.'], 403);
     }
 
     /** Database datetimes are stored in the application timezone; send them with an offset. */
@@ -52,6 +60,7 @@ class ParkingOperationsController extends Controller
             'areas' => array_values($areas),
             'overall' => ParkingStats::overall($areas),
             'hourly' => ParkingStats::hourlyToday(array_keys($areas)),
+            'inside' => ParkingStats::inside(),
             'open_incidents' => DB::table('parking_violations as pv')
                 ->join('violation_types as vt', 'vt.violation_type_id', '=', 'pv.violation_type_id')
                 ->whereIn('vt.violation_code', [ParkingAccessService::WRONG_SLOT, ParkingAccessService::WRONG_AREA])
@@ -106,7 +115,7 @@ class ParkingOperationsController extends Controller
 
         $area = DB::table('parking_areas')->where('parking_area_id', $areaId)->first(['parking_area_id', 'area_code', 'area_name']);
 
-        if (!$area) {
+        if (! $area) {
             return response()->json(['message' => 'Parking area not found.'], 404);
         }
 
@@ -121,10 +130,9 @@ class ParkingOperationsController extends Controller
     }
 
     /**
-     * The interactive DYCI parking map: the static site drawing, every painted
-     * bay, and the live state of every slot (same rows as the slots endpoint).
-     * Slot positions come from parking_slots; slots not printed on the
-     * reference drawing are returned with placed = false.
+     * Complete live slot diagram. Refreshed parking_slots coordinates place
+     * every configured code; measured_layout is a separate static alternative.
+     * Both views use the same live slot records and never change capacity.
      */
     public function map(Request $request): JsonResponse
     {
@@ -146,6 +154,7 @@ class ParkingOperationsController extends Controller
         return response()->json([
             'view_box' => ParkingMapLayout::VIEW_BOX,
             'geometry' => ParkingMapLayout::geometry(),
+            'measured_layout' => ParkingMapLayout::measuredLayout(),
             'gate' => DB::table('access_gates')->where('gate_code', 'MAIN-GATE')->first(['gate_id', 'gate_code', 'gate_name', 'gate_status']),
             'slots' => $slots->map(fn ($s) => $s + [
                 'placed' => $s['pos_x'] !== null,
@@ -157,10 +166,47 @@ class ParkingOperationsController extends Controller
             'extra_bays' => $extraBays,
             'areas' => array_values($areas),
             'overall' => ParkingStats::overall($areas),
+            'inside' => ParkingStats::inside(),
             'ambiguities' => ParkingMapLayout::ambiguities(),
             'corrections' => ParkingMapLayout::corrections(),
             'generated_at' => now()->toIso8601String(),
         ]);
+    }
+
+    /** Signed-in availability only: never select identities, credentials or incident records. */
+    public function availabilityMap(): JsonResponse
+    {
+        $scale = ParkingMapLayout::SCALE;
+        $held = DB::table('parking_transactions')->where('transaction_status', 'active')
+            ->whereNotNull('slot_id')->select('slot_id')->distinct();
+        $slots = DB::table('parking_slots as s')
+            ->join('parking_zones as z', 'z.zone_id', '=', 's.zone_id')
+            ->join('parking_areas as a', 'a.parking_area_id', '=', 'z.parking_area_id')
+            ->leftJoinSub($held, 'held', fn ($join) => $join->on('held.slot_id', '=', 's.slot_id'))
+            ->where('a.is_active', true)->orderBy('a.area_code')->orderBy('s.slot_code')
+            ->get(['s.slot_id', 's.slot_code', 's.slot_status', 's.pos_x', 's.pos_y', 's.slot_width', 's.slot_height', 's.rotation_deg', 's.is_pwd_slot',
+                'a.parking_area_id', 'a.area_code', 'a.area_name', 'held.slot_id as held_slot'])
+            ->map(fn ($s) => [
+                'slot_id' => $s->slot_id, 'slot_code' => $s->slot_code,
+                'parking_area_id' => $s->parking_area_id, 'area_code' => $s->area_code, 'area_name' => $s->area_name,
+                'slot_status' => $s->slot_status,
+                'status' => $s->held_slot ? 'occupied' : (in_array($s->slot_status, ['maintenance', 'disabled'], true) ? 'maintenance' : 'available'),
+                'placed' => $s->pos_x !== null && $s->pos_y !== null,
+                'x' => $s->pos_x !== null ? $s->pos_x / $scale : null,
+                'y' => $s->pos_y !== null ? $s->pos_y / $scale : null,
+                'w' => $s->slot_width !== null ? $s->slot_width / $scale : null,
+                'h' => $s->slot_height !== null ? $s->slot_height / $scale : null,
+                'rotation' => (int) $s->rotation_deg, 'accessible' => (bool) $s->is_pwd_slot,
+            ]);
+        $areas = ParkingStats::areas();
+
+        return response()->json([
+            'view_box' => ParkingMapLayout::VIEW_BOX, 'geometry' => ParkingMapLayout::geometry(),
+            'measured_layout' => ParkingMapLayout::measuredLayout(),
+            'extra_bays' => array_values(array_filter(ParkingMapLayout::bays(), fn ($b) => $b['slot_number'] === null)),
+            'slots' => $slots, 'areas' => array_values($areas), 'overall' => ParkingStats::overall($areas),
+            'generated_at' => now()->toIso8601String(),
+        ])->header('Cache-Control', 'private, no-store');
     }
 
     /**
@@ -191,9 +237,12 @@ class ParkingOperationsController extends Controller
                 DB::raw("COALESCE(NULLIF(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), ''), NULLIF(TRIM(CONCAT_WS(' ', vis.first_name, vis.last_name)), '')) as party_name"),
             ]);
 
-        // Unresolved wrong-slot incidents (vehicle observed here, or assigned here).
+        // Unresolved wrong-slot incidents (vehicle observed here, or assigned here)
+        // for vehicles still parked. Incidents whose vehicle has exited stay open in
+        // Violations but no longer mark a slot on the map.
         $incidents = DB::table('parking_violations as pv')
             ->join('violation_types as vt', 'vt.violation_type_id', '=', 'pv.violation_type_id')
+            ->join('parking_transactions as it', fn ($j) => $j->on('it.transaction_id', '=', 'pv.parking_transaction_id')->where('it.transaction_status', 'active'))
             ->leftJoin('vehicles as v', 'v.vehicle_id', '=', 'pv.vehicle_id')
             ->leftJoin('parking_slots as obs', 'obs.slot_id', '=', 'pv.slot_id')
             ->leftJoin('parking_slots as exp', 'exp.slot_id', '=', 'pv.expected_slot_id')
@@ -248,7 +297,7 @@ class ParkingOperationsController extends Controller
     /** Mark a slot as under maintenance or return it to service. */
     public function updateSlot(Request $request, int $slotId): JsonResponse
     {
-        if ($denied = $this->forbidden($request)) {
+        if ($denied = $this->operationForbidden($request)) {
             return $denied;
         }
 
@@ -260,7 +309,7 @@ class ParkingOperationsController extends Controller
         return DB::transaction(function () use ($slotId, $data, $request) {
             $slot = DB::table('parking_slots')->where('slot_id', $slotId)->lockForUpdate()->first();
 
-            if (!$slot) {
+            if (! $slot) {
                 return response()->json(['message' => 'Parking slot not found.'], 404);
             }
 
@@ -310,6 +359,16 @@ class ParkingOperationsController extends Controller
             $query->where('t.parking_area_id', $area);
         }
 
+        if (in_array($method = $request->query('method'), ['rfid', 'qr', 'manual'], true)) {
+            $query->where('t.access_method', $method);
+        }
+
+        if ($category = $request->query('category')) {
+            $category === 'visitor'
+                ? $query->whereNotNull('t.visitor_id')
+                : $query->where('u.user_type', $category);
+        }
+
         if (in_array($status = $request->query('status'), ['active', 'completed', 'force_closed', 'cancelled'], true)) {
             $query->where('t.transaction_status', $status);
         }
@@ -348,6 +407,8 @@ class ParkingOperationsController extends Controller
                 'party_type' => $row->party_type,
                 'party_name' => $row->party_name,
                 'owner_code' => $row->owner_code,
+                // Student / faculty / employee for campus users, visitor for guests.
+                'user_category' => $row->party_type === 'visitor' ? 'visitor' : $row->user_type,
                 'slot_id' => $row->slot_id,
                 'slot_code' => $row->slot_code,
                 'parking_area_id' => $row->parking_area_id,
@@ -380,7 +441,7 @@ class ParkingOperationsController extends Controller
             ->select([
                 't.transaction_id', 't.ticket_number', 't.slot_id', 't.parking_area_id', 't.entry_datetime', 't.exit_datetime',
                 't.duration_minutes', 't.access_method', 't.transaction_status', 't.slot_confirmed_at',
-                'v.plate_number', 'vt.type_name as vehicle_type', 's.slot_code', 'a.area_name as parking_area', 'u.user_code as owner_code',
+                'v.plate_number', 'vt.type_name as vehicle_type', 's.slot_code', 'a.area_name as parking_area', 'u.user_code as owner_code', 'u.user_type',
                 DB::raw("CASE WHEN t.visitor_id IS NOT NULL THEN 'visitor' ELSE 'user' END as party_type"),
                 DB::raw("COALESCE(NULLIF(TRIM(CONCAT_WS(' ', d.first_name, d.last_name)), ''), NULLIF(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), ''), NULLIF(TRIM(CONCAT_WS(' ', vis.first_name, vis.last_name)), '')) as party_name"),
                 DB::raw("(SELECT pv.violation_id FROM parking_violations pv WHERE pv.parking_transaction_id = t.transaction_id AND pv.violation_status IN ('open', 'under_review') ORDER BY pv.violation_id DESC LIMIT 1) as open_incident_id"),
@@ -406,7 +467,7 @@ class ParkingOperationsController extends Controller
      */
     private function gate(Request $request, string $direction): JsonResponse
     {
-        if ($denied = $this->forbidden($request)) {
+        if ($denied = $this->operationForbidden($request)) {
             return $denied;
         }
 
@@ -434,7 +495,7 @@ class ParkingOperationsController extends Controller
      */
     public function observedSlot(Request $request, int $transactionId): JsonResponse
     {
-        if ($denied = $this->forbidden($request)) {
+        if ($denied = $this->operationForbidden($request)) {
             return $denied;
         }
 
@@ -445,8 +506,8 @@ class ParkingOperationsController extends Controller
 
         $slotId = $data['slot_id'] ?? DB::table('parking_slots')->where('slot_code', strtoupper(trim($data['slot_code'])))->value('slot_id');
 
-        if (!$slotId) {
-            return response()->json(['message' => 'Slot ' . ($data['slot_code'] ?? '') . ' does not exist.', 'errors' => ['slot_code' => ['Unknown slot code.']]], 422);
+        if (! $slotId) {
+            return response()->json(['message' => 'Slot '.($data['slot_code'] ?? '').' does not exist.', 'errors' => ['slot_code' => ['Unknown slot code.']]], 422);
         }
 
         $result = $this->access->reportObservedSlot($transactionId, (int) $slotId, $request->user());

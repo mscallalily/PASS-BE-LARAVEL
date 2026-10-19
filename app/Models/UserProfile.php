@@ -14,9 +14,14 @@ class UserProfile extends Model
     'user_id', 'department_id', 'first_name', 'middle_name', 'last_name', 'suffix',
     'sex', 'birth_date', 'contact_number', 'address_line', 'city', 'province',
     'program_or_position', 'year_level', 'photo_path',
-    'school_id_document_path',
+    'school_id_document_path', 'registration_category', 'registration_unit', 'school_id_check_status', 'school_id_check_result',
     'emergency_contact_name', 'emergency_contact_number',
 ];
+
+    protected function casts(): array
+    {
+        return ['school_id_check_result' => 'array'];
+    }
 
     public function user(): BelongsTo
     {

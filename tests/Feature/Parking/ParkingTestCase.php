@@ -43,6 +43,7 @@ abstract class ParkingTestCase extends TestCase
             'password' => bcrypt('password'),
             'user_type' => $type,
             'account_status' => 'active',
+            'email_verified_at' => now(),
             'created_at' => now(),
             'updated_at' => now(),
         ], 'user_id');
@@ -58,15 +59,23 @@ abstract class ParkingTestCase extends TestCase
         return $staff;
     }
 
+    protected function actingAsAdmin(): User
+    {
+        $admin = $this->user('admin');
+        Sanctum::actingAs($admin);
+
+        return $admin;
+    }
+
     /**
      * A campus user's vehicle with an approved authorization, a driver
      * record, a license, and an active RFID tag.
      *
      * @return array{user: User, vehicle_id: int, plate: string, tag: string, driver_id: int}
      */
-    protected function campusVehicle(string $typeCode = 'sedan', string $licenseVerification = 'verified', string $authorization = 'approved'): array
+    protected function campusVehicle(string $typeCode = 'sedan', string $licenseVerification = 'verified', string $authorization = 'approved', string $userType = 'student'): array
     {
-        $user = $this->user('student');
+        $user = $this->user($userType);
         $plate = 'TST ' . random_int(1000, 9999);
         $vehicleId = DB::table('vehicles')->insertGetId([
             'owner_user_id' => $user->user_id,
@@ -103,6 +112,7 @@ abstract class ParkingTestCase extends TestCase
         ]);
 
         $tag = $this->rfidTag($user->user_id, $vehicleId);
+        DB::table('user_vehicle_selections')->insertOrIgnore(['user_id' => $user->user_id, 'vehicle_id' => $vehicleId, 'updated_at' => now()]);
 
         return ['user' => $user, 'vehicle_id' => $vehicleId, 'plate' => $plate, 'tag' => $tag, 'driver_id' => $driverId];
     }

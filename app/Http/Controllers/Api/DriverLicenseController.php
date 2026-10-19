@@ -286,9 +286,9 @@ class DriverLicenseController extends Controller
 
         $data = $request->validate([
             'decision' => ['required', Rule::in(['verified', 'needs_correction', 'pending_review'])],
-            'reason' => ['nullable', 'string', 'max:1000', 'required_if:decision,needs_correction'],
+            'reason' => ['required', 'string', 'max:1000'],
         ], [
-            'reason.required_if' => 'Explain what the user needs to correct.',
+            'reason.required' => 'Record a reason for this staff exception decision.',
         ]);
 
         return DB::transaction(function () use ($id, $actor, $data, $request) {
@@ -315,7 +315,7 @@ class DriverLicenseController extends Controller
             $license->forceFill([
                 'verification_status' => $data['decision'],
                 'verification_source' => 'staff',
-                'verification_reason' => $data['decision'] === 'needs_correction' ? $data['reason'] : null,
+                'verification_reason' => $data['reason'] ?? null,
                 'reviewed_by' => $actor->user_id,
                 'reviewed_at' => now(),
             ])->save();
@@ -335,23 +335,31 @@ class DriverLicenseController extends Controller
     }
 
     /**
-     * Staff can re-run the automatic check, e.g. after an OCR outage.
+     * Staff can re-run a check; owners can retry their current unfinished automatic check.
      */
     public function recheck(Request $request, int $id): JsonResponse
     {
         $actor = $request->user();
-
-        if (!$actor->canManageParking()) {
-            return response()->json(['message' => 'Unauthorized access.'], 403);
-        }
+        $isStaff = $actor->canManageParking();
 
         $runId = (string) Str::uuid();
 
-        $result = DB::transaction(function () use ($id, $runId, $actor, $request) {
+        $result = DB::transaction(function () use ($id, $runId, $actor, $request, $isStaff) {
             $license = DriverLicense::lockForUpdate()->find($id);
 
             if (!$license) {
-                return response()->json(['message' => 'License submission not found.'], 404);
+                return response()->json(['message' => $isStaff ? 'License submission not found.' : 'Unauthorized access.'], $isStaff ? 404 : 403);
+            }
+
+            if (!$isStaff) {
+                $ownerId = DB::table('drivers')->where('driver_id', $license->driver_id)->value('user_id');
+                $current = $this->currentLicenseFor($actor->user_id);
+                if ((int) $ownerId !== (int) $actor->user_id || $current?->license_id !== $license->license_id) {
+                    return response()->json(['message' => 'Unauthorized access.'], 403);
+                }
+                if ($license->verification_status !== 'pending_review' || $license->verification_source === 'staff') {
+                    return response()->json(['message' => 'Only an unfinished automatic check can be retried. Correct and resubmit a returned document.'], 409);
+                }
             }
 
             if ($license->verification_status === 'processing') {
@@ -367,6 +375,9 @@ class DriverLicenseController extends Controller
                 'verification_status' => 'processing',
                 'verification_source' => 'automatic',
                 'verification_run_id' => $runId,
+                'verification_reason' => null,
+                'ocr_result' => null, 'checked_at' => null,
+                'reviewed_by' => null, 'reviewed_at' => null,
             ])->save();
             LicenseActivity::audit('license_recheck_requested', $license, $old, $actor, $request);
 
@@ -387,7 +398,7 @@ class DriverLicenseController extends Controller
 
     /**
      * With the sync queue the check runs inline. The job's failed() handler
-     * already moves the license to pending review, so the request still succeeds.
+     * leaves an unavailable check unapproved and retryable, so the request still succeeds.
      */
     private function dispatchCheck(int $licenseId, string $runId): void
     {
@@ -395,6 +406,8 @@ class DriverLicenseController extends Controller
             ProcessLicenseVerification::dispatch($licenseId, $runId);
         } catch (\Throwable $e) {
             report($e);
+            // Queue broker failures must also leave a retryable unapproved state.
+            (new ProcessLicenseVerification($licenseId, $runId))->failed($e);
         }
     }
 
