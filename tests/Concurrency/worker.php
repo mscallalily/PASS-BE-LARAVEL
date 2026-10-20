@@ -6,7 +6,13 @@ try {
     if (!str_ends_with(Illuminate\Support\Facades\DB::connection()->getDatabaseName(), '_concurrency_testing')) throw new RuntimeException('Dedicated concurrency database required.');
     $job=json_decode($argv[1],true,16,JSON_THROW_ON_ERROR);
     while(microtime(true)<$job['start']) usleep(1000);
-    if ($job['action']==='approve') {
+    if (in_array($job['action'],['account-approve','account-reject'],true)) {
+        $request=Illuminate\Http\Request::create('/api/admin/users/'.$job['id'],'PATCH');
+        $request->setUserResolver(fn()=>App\Models\User::findOrFail($job['actor']));
+        $action=$job['action']==='account-approve'?'approve':'reject';
+        $response=app(App\Http\Controllers\Api\UserManagementController::class)->{$action}($request,(string)$job['id']);
+        $status=$response->getStatusCode()===200?'decided':'conflict_'.$response->getStatusCode();
+    } elseif ($job['action']==='approve') {
         $request=Illuminate\Http\Request::create('/api/visitors/requests/'.$job['id'].'/approve','POST',['documents_reviewed'=>true]);
         $request->setUserResolver(fn()=>App\Models\User::findOrFail($job['actor']));
         app(App\Http\Controllers\Api\VisitorAccessController::class)->approve($request,$job['id']);$status='approved';

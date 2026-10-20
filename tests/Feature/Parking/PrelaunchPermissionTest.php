@@ -17,6 +17,11 @@ class PrelaunchPermissionTest extends ParkingTestCase
             $response = $this->json($method, $uri);
             $this->assertSame(401, $response->status(), $method.' '.$uri);
             $this->assertTrue(is_callable($route->getAction('uses')) || class_exists($route->getControllerClass()), $route->uri());
+            $controller = $route->getAction('controller');
+            if (is_string($controller) && str_contains($controller, '@')) {
+                [$class, $handler] = explode('@', $controller, 2);
+                $this->assertTrue(method_exists($class, $handler), $controller);
+            }
             $count++;
         }
         $this->assertGreaterThan(60, $count);

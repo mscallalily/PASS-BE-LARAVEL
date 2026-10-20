@@ -152,4 +152,24 @@ class PrelaunchAuditTest extends ParkingTestCase
     {
         $this->postJson('/api/guest/register', ['full_name' => 'AUDIT GUEST', 'email' => 'invalid-password@pass.test', 'contact_number' => '09170000000', 'password' => ['bad'], 'password_confirmation' => ['bad'], 'agree' => true])->assertUnprocessable()->assertJsonValidationErrors('password');
     }
+
+    public function test_real_password_reset_is_single_use_and_revokes_existing_sessions(): void
+    {
+        $user = $this->user(); $user->createToken('existing-session');
+        $token = \Illuminate\Support\Facades\Password::broker()->createToken($user);
+        $payload = ['token' => $token, 'email' => $user->email, 'password' => 'ResetPassword2026!', 'password_confirmation' => 'ResetPassword2026!'];
+        $this->postJson('/api/reset-password', $payload)->assertOk();
+        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('ResetPassword2026!', $user->fresh()->password));
+        $this->assertSame(0, $user->tokens()->count());
+        $this->assertDatabaseHas('audit_logs', ['action' => 'password_reset', 'auditable_id' => $user->user_id]);
+        $this->postJson('/api/reset-password', $payload)->assertUnprocessable();
+    }
+
+    public function test_invalid_reset_token_does_not_change_password_or_existing_sessions(): void
+    {
+        $user = $this->user(); $user->createToken('existing-session');
+        $this->postJson('/api/reset-password', ['token' => 'invalid-token', 'email' => $user->email, 'password' => 'ResetPassword2026!', 'password_confirmation' => 'ResetPassword2026!'])->assertUnprocessable();
+        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('password', $user->fresh()->password));
+        $this->assertSame(1, $user->tokens()->count());
+    }
 }

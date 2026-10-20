@@ -71,5 +71,11 @@ try {
     ensure(DB::table('qr_passes')->where('request_id',$request)->count()===1,'Approval created duplicate QR passes.');
     Illuminate\Support\Facades\Storage::disk('private')->delete($photo);
 
-    echo json_encode(['requests'=>42,'scenarios'=>6,'cases'=>$cases],JSON_PRETTY_PRINT)."\n";
+
+    $admin->roles()->attach(DB::table('roles')->where('role_code','admin')->value('role_id'),['assigned_at'=>now()]);
+    $pending=App\Models\User::create(['user_code'=>'RACE-PENDING','email'=>'race-pending@pass.test','password'=>'AuditPassword2026!','user_type'=>'student','account_status'=>'pending']);
+    $jobs=[];for($i=0;$i<8;$i++)$jobs[]=['action'=>$i%2===0?'account-approve':'account-reject','actor'=>$admin->user_id,'id'=>$pending->user_id];
+    $cases['conflicting_account_decisions']=wave($jobs);ensure($cases['conflicting_account_decisions']===['conflict_409'=>7,'decided'=>1],'Two staff decisions changed the same pending account.');
+    ensure(DB::table('audit_logs')->where('auditable_type','users')->where('auditable_id',$pending->user_id)->whereIn('action',['account_approved','account_rejected'])->count()===1,'Duplicate account decision audit records.');
+    echo json_encode(['requests'=>50,'scenarios'=>7,'cases'=>$cases],JSON_PRETTY_PRINT)."\n";
 } catch(Throwable $e) { fwrite(STDERR,get_class($e).': '.($e instanceof Illuminate\Database\QueryException?'DB code '.($e->errorInfo[1]??0):$e->getMessage())."\n");exit(1); }

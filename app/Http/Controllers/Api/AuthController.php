@@ -307,19 +307,16 @@ public function resetPassword(Request $request): JsonResponse
         'password' => ['bail', 'string', new \App\Rules\PasswordBytes, 'required', 'string', 'min:8', 'confirmed'],
     ]);
 
-    $status = Password::reset(
-        $data,
-        function (User $user, string $password): void {
-            // The User model's "hashed" cast hashes the new password.
-            $user->forceFill([
-                'password' => $password,
-                'remember_token' => Str::random(60),
-            ])->save();
-
-            // Revoke existing API sessions after a password change.
+    $status = DB::transaction(function () use ($data, $request) {
+        // Serialize token consumption with the account password update. A
+        // second reset waits, then sees the already-consumed database token.
+        User::where('email', $data['email'])->lockForUpdate()->first();
+        return Password::reset($data, function (User $user, string $password) use ($request): void {
+            $user->forceFill(['password' => $password, 'remember_token' => Str::random(60)])->save();
             $user->tokens()->delete();
-        }
-    );
+            \App\Support\ActivityAudit::record($request, $user, 'password_reset', 'users', (int) $user->user_id);
+        });
+    }, 3);
 
     if ($status === Password::PASSWORD_RESET) {
         return response()->json([
