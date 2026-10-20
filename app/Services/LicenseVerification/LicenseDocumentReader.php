@@ -58,6 +58,11 @@ class LicenseDocumentReader
             'sharpness' => null,
         ];
 
+        $size = @getimagesize($path);
+        if (!$size || $size[0] < 1 || $size[1] < 1 || $size[0] > 12000 || $size[1] > 12000 || $size[0] * $size[1] > 20000000) {
+            $result['engine_error'] = 'Use a readable image no larger than 20 megapixels and 12000 pixels on either side.';
+            return $result;
+        }
         $image = @imagecreatefromstring((string) file_get_contents($path));
 
         if ($image === false) {
@@ -69,14 +74,13 @@ class LicenseDocumentReader
         $result['width'] = imagesx($image);
         $result['height'] = imagesy($image);
 
-        if ($result['width'] > self::MAX_WORK_WIDTH) {
-            $image = $this->scaleToWidth($image, self::MAX_WORK_WIDTH);
-        }
+        $scale = min(1, self::MAX_WORK_WIDTH / imagesx($image), 3200 / imagesy($image));
+        if ($scale < 1) $image = $this->scaleToWidth($image, max(1, (int) floor(imagesx($image) * $scale)));
 
         imagefilter($image, IMG_FILTER_GRAYSCALE);
         $result['sharpness'] = $this->sharpness($image);
 
-        if (imagesx($image) < self::OCR_MIN_WIDTH) {
+        if (imagesx($image) < self::OCR_MIN_WIDTH && imagesy($image) * self::OCR_MIN_WIDTH / imagesx($image) <= 3200) {
             $image = $this->scaleToWidth($image, self::OCR_MIN_WIDTH);
         }
 

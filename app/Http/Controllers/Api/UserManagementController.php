@@ -35,11 +35,17 @@ class UserManagementController extends Controller
             ], 403);
         }
 
+        $filters = $request->validate(['role' => ['nullable', 'in:admin,parking_staff,student,faculty,employee,guest'], 'page' => ['nullable', 'integer', 'min:1'], 'search' => ['nullable', 'string', 'max:100']]);
         $query = User::with([
             'profile.department',
             'roles',
         ]);
 
+        if ($role = $filters['role'] ?? null) {
+            $codes = match ($role) { 'admin' => ['admin', 'parking_admin'], 'parking_staff' => ['security', 'parking_staff'], default => [$role] };
+            $type = $role === 'parking_staff' ? 'security' : $role;
+            $query->where(fn ($q) => $q->where('user_type', $type)->orWhereHas('roles', fn ($r) => $r->whereIn('role_code', $codes)));
+        }
         // Optional status filter.
         $status = $request->query('status');
 
@@ -96,6 +102,42 @@ class UserManagementController extends Controller
         return response()->json([
             'users' => $users,
         ]);
+    }
+
+    public function store(Request $request): JsonResponse
+    {
+        abort_unless($request->user() && $this->canManageUsers($request->user()), 403);
+        $request->merge(['full_name' => mb_strtoupper(trim((string) $request->input('full_name'))),
+            'user_code' => strtoupper(trim((string) $request->input('user_code'))),
+            'email' => strtolower(trim((string) $request->input('email')))]);
+        $data = $request->validate([
+            'full_name' => ['required', 'string', 'max:200', 'regex:/^\S+(\s+\S+)+$/u'],
+            'user_code' => ['required', 'string', 'max:50', 'regex:/^[A-Z0-9_-]+$/', 'unique:users,user_code'],
+            'email' => ['required', 'email', 'max:255', 'unique:users,email'],
+            'contact_number' => ['required', 'string', 'regex:/^(?:09\d{9}|\+639\d{9})$/'],
+            'password' => ['bail', 'string', new \App\Rules\PasswordBytes, 'required', 'string', 'min:8', 'max:72', 'confirmed'],
+        ]);
+        try {
+            $user = \Illuminate\Support\Facades\DB::transaction(function () use ($data, $request) {
+                $parts = preg_split('/\s+/', $data['full_name']); $last = array_pop($parts);
+                $department = \Illuminate\Support\Facades\DB::table('departments')->where('department_code', 'SEC')->value('department_id');
+                if (!$department) {
+                    \Illuminate\Support\Facades\DB::table('departments')->insertOrIgnore(['department_code' => 'SEC', 'department_name' => 'Security Office', 'is_active' => true]);
+                    $department = \Illuminate\Support\Facades\DB::table('departments')->where('department_code', 'SEC')->value('department_id');
+                }
+                $role = \Illuminate\Support\Facades\DB::table('roles')->where('role_code', 'security')->where('is_active', true)->value('role_id');
+                abort_unless($role, 503, 'Configure the Parking Staff role before creating staff.');
+                $user = User::create(['user_code' => $data['user_code'], 'email' => $data['email'], 'password' => $data['password'], 'user_type' => 'security', 'account_status' => 'active']);
+                $user->forceFill(['email_verified_at' => now()])->save();
+                $user->profile()->create(['first_name' => implode(' ', $parts), 'last_name' => $last, 'contact_number' => $data['contact_number'], 'department_id' => $department]);
+                $user->roles()->attach($role, ['assigned_at' => now()]);
+                \App\Support\ActivityAudit::record($request, $request->user(), 'staff_created', 'users', $user->user_id, null, ['user_type' => 'security', 'account_status' => 'active']);
+                return $user;
+            }, 3);
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $error) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['email' => 'This email or staff ID is already registered.']);
+        }
+        return response()->json(['message' => 'Parking Staff account created.', 'user' => ['id' => (string) $user->user_id, 'role' => 'security']], 201);
     }
 
     public function schoolId(Request $request, int $id)

@@ -105,6 +105,26 @@ class ParkingOperationsController extends Controller
         return response()->json(['data' => $rows]);
     }
 
+    /** Personal records use the owner recorded on the transaction, not the vehicle's current owner. */
+    public function history(Request $request): JsonResponse
+    {
+        abort_unless(in_array($request->user()->user_type, ['student', 'faculty', 'employee'], true) && !$request->user()->isGuest(), 403);
+        $data = $request->validate(['from' => ['nullable', 'date_format:Y-m-d'], 'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
+            'search' => ['nullable', 'string', 'max:100'], 'page' => ['nullable', 'integer', 'min:1'], 'per_page' => ['nullable', 'integer', 'min:1', 'max:100']]);
+        $query = $this->transactionQuery()->where('t.user_id', $request->user()->user_id)
+            ->when($data['from'] ?? null, fn ($q, $v) => $q->where('t.entry_datetime', '>=', $v.' 00:00:00'))
+            ->when($data['to'] ?? null, fn ($q, $v) => $q->where('t.entry_datetime', '<', CarbonImmutable::parse($v, CampusTime::zone())->addDay()->toDateTimeString()))
+            ->when($data['search'] ?? null, fn ($q, $v) => $q->where(fn ($w) => $w->where('v.plate_number', 'like', '%'.$v.'%')->orWhere('t.ticket_number', 'like', '%'.$v.'%')));
+        $page = $query->orderByDesc('t.entry_datetime')->orderByDesc('t.transaction_id')->paginate($data['per_page'] ?? 15);
+        $rows = $page->getCollection()->map(fn ($r) => [
+            'transaction_id' => $r->transaction_id, 'ticket_number' => $r->ticket_number, 'plate_number' => $r->plate_number,
+            'vehicle_type' => $r->vehicle_type, 'parking_area' => $r->parking_area, 'slot_code' => $r->slot_code,
+            'entry_datetime' => self::iso($r->entry_datetime), 'exit_datetime' => self::iso($r->exit_datetime),
+            'duration_minutes' => $r->duration_minutes, 'access_method' => $r->access_method, 'status' => $r->transaction_status,
+        ]);
+        return response()->json(['data' => $rows, 'meta' => ['current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'total' => $page->total()]]);
+    }
+
     // ----------------------------------------------------------- slots
 
     public function slots(Request $request, int $areaId): JsonResponse

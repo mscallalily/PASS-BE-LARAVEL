@@ -206,7 +206,7 @@ class VisitorAccessController extends Controller
      */
     public static function registerVisitorVehicle(int $visitorId, string $plate, int $vehicleTypeId, array $details = []): int
     {
-        $vehicle = DB::table('vehicles')->where('plate_number', $plate)->lockForUpdate()->first();
+        $vehicle = DB::table('vehicles')->whereRaw("REPLACE(REPLACE(UPPER(plate_number), '-', ''), ' ', '') = ?", [\App\Support\PlateNumber::key($plate)])->lockForUpdate()->first();
 
         if ($vehicle && ((int) $vehicle->owner_visitor_id !== $visitorId || $vehicle->deleted_at !== null)) {
             throw ValidationException::withMessages(['plate_number' => $vehicle->owner_user_id
@@ -218,6 +218,7 @@ class VisitorAccessController extends Controller
             return (int) $vehicle->vehicle_id;
         }
 
+        try {
         return (int) DB::table('vehicles')->insertGetId([
             'owner_visitor_id' => $visitorId,
             'vehicle_type_id' => $vehicleTypeId,
@@ -229,6 +230,9 @@ class VisitorAccessController extends Controller
             'created_at' => now(),
             'updated_at' => now(),
         ], 'vehicle_id');
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $error) {
+            throw ValidationException::withMessages(['plate_number' => 'This plate number is already registered.']);
+        }
     }
 
     /** Only Admins approve or reject visitor requests (not ordinary Parking Staff). */

@@ -101,9 +101,9 @@ class GuestAccountTest extends ParkingTestCase
         $id = $this->postGuestRequest($payload)->assertCreated()->json('request_id');
         $stored = DB::table('visitor_requests')->where('request_id', $id)->first();
         $this->assertNotSame($payload['driver_license_number'], $stored->driver_license_encrypted);
-        $this->getJson('/api/guest/requests')->assertOk()->assertJsonPath('data.0.driver.name', 'Juan Santos')->assertJsonPath('data.0.driver.license_reference', '•••• 6789')->assertJsonPath('data.0.driver.passenger_count', 3)->assertJsonPath('data.0.driver.identity_verified', false);
+        $this->getJson('/api/guest/requests')->assertOk()->assertJsonPath('data.0.driver.name', 'JUAN SANTOS')->assertJsonPath('data.0.driver.license_reference', '•••• 6789')->assertJsonPath('data.0.driver.passenger_count', 3)->assertJsonPath('data.0.driver.identity_verified', false);
         $this->actingAsAdmin();
-        $this->getJson('/api/visitors/requests')->assertOk()->assertJsonPath('data.0.driver.name', 'Juan Santos');
+        $this->getJson('/api/visitors/requests')->assertOk()->assertJsonPath('data.0.driver.name', 'JUAN SANTOS');
     }
 
     public function test_tomorrow_means_next_manila_calendar_day_even_near_midnight(): void
@@ -114,7 +114,7 @@ class GuestAccountTest extends ParkingTestCase
         $payload['arrival_time'] = '00:10';
         $payload['departure_time'] = '01:00';
         $this->postGuestRequest($payload)->assertCreated();
-        $this->getJson('/api/guest/requests')->assertJsonPath('data.0.driver.name', 'Ana Maria Cruz');
+        $this->getJson('/api/guest/requests')->assertJsonPath('data.0.driver.name', 'ANA MARIA CRUZ');
     }
 
     public function test_photos_are_required_private_and_scoped_to_the_request_owner(): void
@@ -183,9 +183,9 @@ class GuestAccountTest extends ParkingTestCase
         $this->assertNotSame($data['password'], $user->password);
         $this->assertTrue(Hash::check($data['password'], $user->password));
         $this->assertTrue(User::find($user->user_id)->isGuest());
-        $this->assertSame('Ana Maria', DB::table('user_profiles')->where('user_id', $user->user_id)->value('first_name'));
+        $this->assertSame('ANA MARIA', DB::table('user_profiles')->where('user_id', $user->user_id)->value('first_name'));
         $visitor = DB::table('visitors')->where('user_id', $user->user_id)->first();
-        $this->assertSame('Cruz', $visitor->last_name);
+        $this->assertSame('CRUZ', $visitor->last_name);
         $this->assertSame('09171234567', $visitor->contact_number);
 
         $model = User::findOrFail($user->user_id);
@@ -204,7 +204,7 @@ class GuestAccountTest extends ParkingTestCase
         // Verification allows login but does not issue a QR pass.
         $login = $this->postJson('/api/login', ['identifier' => $data['email'], 'password' => $data['password']])->assertOk();
         $this->assertSame('guest', $login->json('user.role'));
-        $this->assertSame('Ana Maria Cruz', $login->json('user.name'));
+        $this->assertSame('ANA MARIA CRUZ', $login->json('user.name'));
     }
 
     public function test_existing_guest_can_resend_and_expired_or_tampered_links_do_not_verify(): void
@@ -402,7 +402,7 @@ class GuestAccountTest extends ParkingTestCase
         $id = $this->requestFuture($this->guestVehicle());
 
         $this->patchJson('/api/guest/profile', ['full_name' => 'Ana Reyes', 'contact_number' => '09998887777', 'affiliation' => 'ACME'])->assertOk();
-        $this->assertSame('Reyes', DB::table('visitors')->where('user_id', $guest->user_id)->value('last_name'));
+        $this->assertSame('REYES', DB::table('visitors')->where('user_id', $guest->user_id)->value('last_name'));
 
         $this->postJson("/api/guest/requests/{$id}/cancel")->assertOk();
         $this->assertSame('cancelled', DB::table('visitor_requests')->where('request_id', $id)->value('request_status'));

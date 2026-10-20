@@ -67,7 +67,7 @@ class RegistrationIdTest extends ParkingTestCase
         $this->mock(InstitutionalIdReader::class)->shouldReceive('read')->once()->andReturn($this->evidence());
         $data = $this->payload();
         $before = DB::table('users')->count();
-        $response = $this->post('/api/registration/id-check', ['registration_category' => 'college', 'school_id_file' => $data['school_id_file']], ['Accept' => 'application/json'])->assertOk()->assertJsonPath('data.fields.last_name', 'Dela Cruz')->assertJsonPath('data.status', 'matched');
+        $response = $this->post('/api/registration/id-check', ['registration_category' => 'college', 'school_id_file' => $data['school_id_file']], ['Accept' => 'application/json'])->assertOk()->assertJsonPath('data.fields.last_name', 'DELA CRUZ')->assertJsonPath('data.status', 'matched');
         $this->assertNotEmpty($response->json('data.receipt'));
         $this->assertStringNotContainsString('Juan', $response->json('data.receipt'));
         $this->assertDatabaseCount('users', $before);
@@ -180,7 +180,7 @@ class RegistrationIdTest extends ParkingTestCase
         $this->assertDatabaseHas('users', ['user_id' => (int) $r->json('user.id'), 'account_status' => 'pending']);
         $unrelated = $this->evidence(['school_marker' => false]);
         $unrelated['fields']['user_code']='2024-02345';
-        $other=$this->register($this->withReceipt($this->payload(changes: ['email' => 'other@example.test', 'user_code' => '2024-02345']), $unrelated))->assertCreated()->assertJsonPath('id_check.status','manual_review')->assertJsonPath('id_check.checks.school.result','uncertain');
+        $other=$this->register($this->withReceipt($this->payload(changes: ['email' => 'other@example.test', 'user_code' => '2024-02345']), $unrelated))->assertCreated()->assertJsonPath('id_check.status','manual_review');
         $this->verifyRegistration((int)$other->json('user.id'))->assertOk();
         $this->assertDatabaseHas('users',['user_id'=>(int)$other->json('user.id'),'account_status'=>'pending']);
     }
@@ -214,7 +214,7 @@ class RegistrationIdTest extends ParkingTestCase
     public function test_disputed_ocr_can_be_submitted_for_staff_review_without_claiming_a_match(): void
     {
         $data=$this->withReceipt($this->payload(changes:['first_name'=>'Juan Manuel','request_manual_review'=>true]));
-        $r=$this->register($data)->assertCreated()->assertJsonPath('id_check.status','manual_review')->assertJsonPath('id_check.automatic_status','needs_correction')->assertJsonPath('user.accountStatus','pending');
+        $r=$this->register($data)->assertCreated()->assertJsonPath('id_check.status','manual_review')->assertJsonPath('user.accountStatus','pending');
         $profile=\App\Models\UserProfile::where('user_id',(int)$r->json('user.id'))->first();
         $this->assertSame('fail',$profile->school_id_check_result['checks']['first_name']['result']);
         $this->assertTrue($profile->school_id_check_result['manual_review_requested']);
@@ -237,12 +237,11 @@ class RegistrationIdTest extends ParkingTestCase
         foreach(['202401234','2024-01234'] as $number) $this->postJson('/api/login',['identifier'=>$number,'password'=>'Password2026!'])->assertOk()->assertJsonPath('user.id',(string)$id)->assertJsonPath('user.accountStatus','pending');
     }
 
-    public function test_ambiguous_legacy_normalized_ids_do_not_select_someone_elses_account(): void
+    public function test_database_rejects_separator_aliases_for_existing_institutional_ids(): void
     {
-        $first=$this->user(overrides:['user_code'=>'2024-09876']);
+        $this->user(overrides:['user_code'=>'2024-09876']);
+        $this->expectException(\Illuminate\Database\UniqueConstraintViolationException::class);
         $this->user(overrides:['user_code'=>'2024 09876']);
-        $this->postJson('/api/login',['identifier'=>'202409876','password'=>'password'])->assertUnauthorized();
-        $this->postJson('/api/login',['identifier'=>'2024-09876','password'=>'password'])->assertOk()->assertJsonPath('user.id',(string)$first->user_id);
     }
 
     public function test_manila_year_rollover_uses_current_year_not_hard_coded_2026(): void
@@ -346,9 +345,9 @@ class RegistrationIdTest extends ParkingTestCase
     public function test_suffix_is_saved_displayed_and_checked_before_automatic_activation(): void
     {
         $e=$this->evidence(); $e['fields']['suffix']='Jr.'; $e['field_confidence']['suffix']=95;
-        $r=$this->register($this->withReceipt($this->payload(changes:['suffix'=>'jr']),$e))->assertCreated()->assertJsonPath('user.name','Juan Miguel Dela Cruz Jr.');
+        $r=$this->register($this->withReceipt($this->payload(changes:['suffix'=>'jr']),$e))->assertCreated()->assertJsonPath('user.name','JUAN MIGUEL DELA CRUZ JR.');
         $id=(int)$r->json('user.id');
-        $this->assertDatabaseHas('user_profiles',['user_id'=>$id,'suffix'=>'Jr.','last_name'=>'Dela Cruz']);
+        $this->assertDatabaseHas('user_profiles',['user_id'=>$id,'suffix'=>'JR.','last_name'=>'DELA CRUZ']);
         $this->verifyRegistration($id)->assertOk();
         $this->assertSame('active',\App\Models\User::findOrFail($id)->account_status);
     }
@@ -357,7 +356,7 @@ class RegistrationIdTest extends ParkingTestCase
     {
         $e=$this->evidence(); $e['fields']['suffix']='III'; $e['field_confidence']['suffix']=95;
         $p=$this->withReceipt($this->payload(changes:['suffix'=>'']),$e);
-        $this->post('/api/registration/id-check',$p,['Accept'=>'application/json'])->assertOk()->assertJsonPath('data.checks.suffix.result','fail');
+        $this->post('/api/registration/id-check',$p,['Accept'=>'application/json'])->assertOk()->assertJsonPath('data.status','needs_correction');
         $this->register($p)->assertUnprocessable()->assertJsonValidationErrors('school_id_file');
         $p['request_manual_review']=true;
         $r=$this->register($p)->assertCreated()->assertJsonPath('user.accountStatus','pending');
@@ -368,29 +367,30 @@ class RegistrationIdTest extends ParkingTestCase
     public function test_unread_suffix_and_conflicting_number_reads_require_review_without_lowering_threshold(): void
     {
         $e=$this->evidence(['field_conflicts'=>['user_code'=>true]]);
-        $r=$this->register($this->withReceipt($this->payload(changes:['suffix'=>'Jr.']),$e))->assertCreated()->assertJsonPath('id_check.status','manual_review')->assertJsonPath('id_check.checks.user_code.result','uncertain')->assertJsonPath('id_check.checks.suffix.result','uncertain');
+        $r=$this->register($this->withReceipt($this->payload(changes:['suffix'=>'Jr.']),$e))->assertCreated()->assertJsonPath('id_check.status','manual_review');
         $this->verifyRegistration((int)$r->json('user.id'))->assertOk();
         $this->assertDatabaseHas('users',['user_id'=>(int)$r->json('user.id'),'account_status'=>'pending']);
     }
 
     public function test_explicit_staff_review_request_stays_pending_even_if_details_match(): void
     {
-        $r=$this->register($this->withReceipt($this->payload(changes:['request_manual_review'=>true])))->assertCreated()->assertJsonPath('id_check.status','manual_review')->assertJsonPath('id_check.automatic_status','matched');
+        $r=$this->register($this->withReceipt($this->payload(changes:['request_manual_review'=>true])))->assertCreated()->assertJsonPath('id_check.status','manual_review');
         $this->verifyRegistration((int)$r->json('user.id'))->assertOk();
         $this->assertDatabaseHas('users',['user_id'=>(int)$r->json('user.id'),'account_status'=>'pending']);
     }
 
-    public function test_review_reasons_identify_the_exact_uncertain_checks_and_measured_values(): void
+    public function test_detailed_checks_stay_private_and_are_available_to_staff_in_saved_submission(): void
     {
         $e=$this->evidence(['sharpness'=>40,'school_marker'=>false,'confidence'=>50,'field_confidence'=>['first_name'=>77.2,'last_name'=>95,'user_code'=>95]]);
         $data=$this->withReceipt($this->payload(),$e);
         $r=$this->post('/api/registration/id-check',$data,['Accept'=>'application/json'])->assertOk()->assertJsonPath('data.status','manual_review');
-        $this->assertStringContainsString('77.2%', $r->json('data.checks.first_name.detail'));
-        $this->assertStringContainsString('40.0', $r->json('data.checks.image_quality.detail'));
-        $this->assertContains($r->json('data.checks.first_name.detail'),$r->json('data.reasons'));
-        $this->assertContains($r->json('data.checks.image_quality.detail'),$r->json('data.reasons'));
-        $this->assertContains($r->json('data.checks.school.detail'),$r->json('data.reasons'));
-        $this->assertStringNotContainsString('could not be confirmed automatically',implode(' ',$r->json('data.reasons')));
+        $this->assertEqualsCanonicalizing(['status','message','fields','receipt','current_year'], array_keys($r->json('data')));
+        $registered=$this->register($data)->assertCreated();
+        $private=DB::table('user_profiles')->where('user_id',$registered->json('user.id'))->value('school_id_check_result');
+        $private=json_decode($private,true);
+        $this->assertStringContainsString('77.2%', $private['checks']['first_name']['detail']);
+        $this->assertStringContainsString('40.0', $private['checks']['image_quality']['detail']);
+        $this->assertEqualsCanonicalizing(['status','message'], array_keys($registered->json('id_check')));
     }
 
     public function test_low_full_card_ocr_confidence_does_not_block_strong_matching_fields(): void
@@ -407,7 +407,7 @@ class RegistrationIdTest extends ParkingTestCase
     public function test_reported_borderline_quality_and_repeated_matching_number_can_activate_after_email(): void
     {
         $e=$this->evidence(['width'=>1308,'height'=>2049,'sharpness'=>59.1,'field_confidence'=>['first_name'=>91.9,'last_name'=>96.8,'user_code'=>49.3],'number_consensus'=>$this->consensus()]);
-        $r=$this->register($this->withReceipt($this->payload(),$e))->assertCreated()->assertJsonPath('id_check.status','matched')->assertJsonPath('id_check.checks.image_quality.advisory',true)->assertJsonPath('id_check.checks.user_code.result','pass');
+        $r=$this->register($this->withReceipt($this->payload(),$e))->assertCreated()->assertJsonPath('id_check.status','matched');
         $this->verifyRegistration((int)$r->json('user.id'))->assertOk();
         $this->assertDatabaseHas('users',['user_id'=>(int)$r->json('user.id'),'account_status'=>'active']);
     }
@@ -415,7 +415,7 @@ class RegistrationIdTest extends ParkingTestCase
     public function test_low_sharpness_is_not_a_veto_when_all_identity_text_checks_are_strong(): void
     {
         $e=$this->evidence(['sharpness'=>59.1]);
-        $this->register($this->withReceipt($this->payload(),$e))->assertCreated()->assertJsonPath('id_check.status','matched')->assertJsonPath('id_check.checks.image_quality.result','pass');
+        $this->register($this->withReceipt($this->payload(),$e))->assertCreated()->assertJsonPath('id_check.status','matched');
     }
 
     public function test_single_low_confidence_number_missing_branding_or_low_resolution_still_require_review(): void

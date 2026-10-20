@@ -89,6 +89,7 @@ class DriverLicenseController extends Controller
 
         try {
             $outcome = DB::transaction(function () use ($user, $profile, $data, $number, $file, $path, $runId, $request) {
+                DB::table('users')->where('user_id', $user->user_id)->lockForUpdate()->first();
                 $driver = Driver::firstOrCreate(
                     ['user_id' => $user->user_id],
                     [

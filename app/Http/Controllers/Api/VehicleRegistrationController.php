@@ -100,10 +100,13 @@ class VehicleRegistrationController extends Controller
             'vehicle_photo' => ['required', 'image', 'mimes:jpg,jpeg,png', 'max:5120'],
         ]);
 
+        if (DB::table('vehicles')->whereRaw("REPLACE(REPLACE(UPPER(plate_number), '-', ''), ' ', '') = ?", [\App\Support\PlateNumber::key($data['plate_number'])])->exists()) throw ValidationException::withMessages(['plate_number' => 'This plate number is already registered.']);
+
         $photoPath = $request->file('vehicle_photo')->store('vehicle-photos', 'private');
         if (!$photoPath) abort(500, 'Unable to store vehicle photo.');
         try {
             $vehicle = DB::transaction(function () use ($user, $data, $photoPath) {
+                DB::table('users')->where('user_id', $user->user_id)->lockForUpdate()->first();
                 // License submission permits registration; staff verification and
                 // vehicle authorization remain separate mandatory access steps.
                 $driver = DB::table('drivers')->where('user_id', $user->user_id)

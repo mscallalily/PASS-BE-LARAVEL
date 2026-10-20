@@ -34,7 +34,7 @@ class AuthController extends Controller
                     && ($problem = \App\Services\Registration\InstitutionalIdRules::idProblem($category, $value))) $fail($problem);
             }],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
-            'password' => ['required', 'string', 'min:8', 'confirmed'],
+            'password' => ['bail', 'string', new \App\Rules\PasswordBytes, 'required', 'string', 'min:8', 'confirmed'],
             'user_type' => ['sometimes', Rule::in([$userType])],
             'department' => ['required', 'string', 'max:150'],
             'contact_number' => ['required', 'string', 'max:30'],
@@ -66,7 +66,7 @@ class AuthController extends Controller
         $rules = app(\App\Services\Registration\InstitutionalIdRules::class);
         $check = $rules->requestManualReview($rules->evaluate($category, $evidence, $data), $request->boolean('request_manual_review'));
         if ($check['status'] === 'needs_correction') {
-            throw \Illuminate\Validation\ValidationException::withMessages(['school_id_file' => implode(' ', $check['reasons'])]);
+            throw \Illuminate\Validation\ValidationException::withMessages(['school_id_file' => 'The document and submitted details could not be matched. Check your details or upload a clearer ID.']);
         }
         $check['activation_policy'] = 'matched-id-and-email-v1';
         $check['identity_hash'] = \App\Services\Registration\RegistrationActivation::identity($category, $number, $data['first_name'], $data['last_name'], $data['middle_initial'] ?? '', $data['suffix'] ?? '');
@@ -78,9 +78,9 @@ class AuthController extends Controller
                     'user_type' => $userType, 'account_status' => 'pending']);
                 $user->profile()->create([
                     'department_id' => $department?->department_id, 'registration_category' => $data['registration_category'], 'registration_unit' => $unit,
-                    'first_name' => trim($data['first_name']), 'last_name' => trim($data['last_name']),
+                    'first_name' => mb_strtoupper(trim($data['first_name'])), 'last_name' => mb_strtoupper(trim($data['last_name'])),
                     'middle_name' => empty($data['middle_initial']) ? null : mb_strtoupper(rtrim($data['middle_initial'], '.')).'.',
-                    'suffix' => \App\Services\Registration\InstitutionalIdRules::suffix($data['suffix'] ?? '') ?: null,
+                    'suffix' => mb_strtoupper(\App\Services\Registration\InstitutionalIdRules::suffix($data['suffix'] ?? '')) ?: null,
                     'contact_number' => trim($data['contact_number']), 'school_id_document_path' => $path,
                     'school_id_check_status' => $check['status'], 'school_id_check_result' => $check,
                 ]);
@@ -104,15 +104,15 @@ class AuthController extends Controller
         catch (Throwable $error) { report($error); }
         return response()->json([
             'message' => $sent ? 'Registration saved. Verify your email next. Matching IDs activate automatically; uncertain checks require staff review.' : 'Registration saved, but the verification email could not be sent. Use Send / resend code to try again.',
-            'email_verification_sent' => $sent, 'id_check' => $check, 'user' => $this->userPayload($user),
+            'email_verification_sent' => $sent, 'id_check' => \App\Services\Registration\PublicIdCheck::summary($check), 'user' => $this->userPayload($user),
         ], 201);
     }
 
     public function login(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'identifier' => ['required', 'string'],
-            'password' => ['required', 'string'],
+            'identifier' => ['required', 'string', 'max:255'],
+            'password' => ['required', 'string', 'max:1024'],
         ]);
 
         $identifier = trim($data['identifier']);
@@ -266,9 +266,12 @@ public function forgotPassword(Request $request): JsonResponse
         'email' => ['required', 'email', 'max:255'],
     ]);
 
-    $status = Password::sendResetLink([
-        'email' => $data['email'],
-    ]);
+    try {
+        $status = Password::sendResetLink(['email' => $data['email']]);
+    } catch (Throwable $error) {
+        report($error);
+        return response()->json(['message' => 'Email delivery is unavailable. Please try again later.'], 503);
+    }
 
     // Avoid revealing whether an email exists in the database.
     if ($status === Password::RESET_LINK_SENT ||
@@ -301,7 +304,7 @@ public function resetPassword(Request $request): JsonResponse
     $data = $request->validate([
         'token' => ['required', 'string'],
         'email' => ['required', 'email', 'max:255'],
-        'password' => ['required', 'string', 'min:8', 'confirmed'],
+        'password' => ['bail', 'string', new \App\Rules\PasswordBytes, 'required', 'string', 'min:8', 'confirmed'],
     ]);
 
     $status = Password::reset(

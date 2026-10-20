@@ -33,36 +33,36 @@ Route::post('/register', [AuthController::class, 'register'])->middleware('throt
 
 // Guest (visitor) self-registration.
 Route::post('/guest/register', [GuestAccountController::class, 'register'])
-    ->middleware('throttle:5,1');
+    ->middleware('throttle:5,1,api-action-1:');
 
 // Registered RFID gate readers authenticate with X-Reader-Code / X-Reader-Key.
 Route::post('/devices/rfid/scan', [RfidReaderController::class, 'scan'])
-    ->middleware('throttle:120,1');
+    ->middleware('throttle:120,1,api-action-2:');
 
-Route::post('/email/verify-code', \App\Http\Controllers\Api\VerifyEmailCodeController::class)->middleware('throttle:10,1');
+Route::post('/email/verify-code', \App\Http\Controllers\Api\VerifyEmailCodeController::class)->middleware('throttle:10,1,api-action-3:');
 
 // Email verification
 Route::get(
     '/email/verify/{id}/{hash}',
     [EmailVerificationController::class, 'verify']
 )
-    ->middleware(['signed', 'throttle:10,1'])
+    ->middleware(['signed', 'throttle:10,1,api-action-4:'])
     ->name('verification.verify');
 Route::post(
     '/email/verification-notification',
     ResendEmailVerificationController::class
-)->middleware('throttle:5,1');
+)->middleware('throttle:5,1,api-action-5:');
 
 // Login
 Route::post('/login', [AuthController::class, 'login'])
-    ->middleware('throttle:10,1');
+    ->middleware('throttle:10,1,api-action-6:');
 
 // Public password recovery routes
 Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])
-    ->middleware('throttle:5,1');
+    ->middleware('throttle:5,1,api-action-7:');
 
 Route::post('/reset-password', [AuthController::class, 'resetPassword'])
-    ->middleware('throttle:5,1');
+    ->middleware('throttle:5,1,api-action-8:');
 
 // Authenticated routes
 Route::middleware(['auth:sanctum', \App\Http\Middleware\AccountAccess::class])->group(function () {
@@ -92,9 +92,12 @@ Route::post(
 );
     Route::get('/admin/users/{id}/school-id', [UserManagementController::class, 'schoolId'])->whereNumber('id');
     Route::get('/me', [AuthController::class, 'me']);
+    Route::get('/profile', [\App\Http\Controllers\Api\AccountProfileController::class, 'show']);
+    Route::patch('/profile', [\App\Http\Controllers\Api\AccountProfileController::class, 'update']);
+    Route::post('/profile/password', [\App\Http\Controllers\Api\AccountProfileController::class, 'password'])->middleware('throttle:5,1,profile-password:');
 
     // Change markers for the shared frontend refresh (polled every few seconds while a tab is visible).
-    Route::get('/sync/revision', [SyncController::class, 'revision'])->middleware('throttle:120,1');
+    Route::get('/sync/revision', [SyncController::class, 'revision'])->middleware('throttle:120,1,api-action-9:');
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/parking/dashboard', [ParkingDashboardController::class, 'index']);
     Route::get('/vehicles/authorizations', [VehicleAuthorizationController::class, 'index']);
@@ -125,6 +128,7 @@ Route::post(
         Route::get('/areas/{areaId}/slots', [ParkingOperationsController::class, 'slots'])->whereNumber('areaId');
         Route::get('/map', [ParkingOperationsController::class, 'map']);
         Route::patch('/slots/{slotId}', [ParkingOperationsController::class, 'updateSlot'])->whereNumber('slotId');
+        Route::get('/history', [ParkingOperationsController::class, 'history']);
         Route::get('/transactions', [ParkingOperationsController::class, 'transactions']);
         Route::post('/transactions/{id}/observed-slot', [ParkingOperationsController::class, 'observedSlot'])->whereNumber('id');
         Route::post('/entry', [ParkingOperationsController::class, 'entry']);
@@ -134,7 +138,7 @@ Route::post(
     // Gate access records (read-only) and RFID credentials.
     Route::get('/access-events', [AccessEventController::class, 'index']);
     Route::get('/rfid/assignments', [AccessEventController::class, 'rfidAssignments']);
-    Route::post('/rfid/assignments', [\App\Http\Controllers\Api\RfidAssignmentController::class, 'store'])->middleware('throttle:20,1');
+    Route::post('/rfid/assignments', [\App\Http\Controllers\Api\RfidAssignmentController::class, 'store'])->middleware('throttle:20,1,api-action-10:');
     Route::patch('/rfid/assignments/{id}/revoke', [\App\Http\Controllers\Api\RfidAssignmentController::class, 'revoke'])->whereNumber('id');
 
 
@@ -142,7 +146,7 @@ Route::post(
     Route::prefix('visitors')->group(function () {
         Route::get('/options', [VisitorAccessController::class, 'options']);
         Route::get('/requests', [VisitorAccessController::class, 'requests']);
-        Route::post('/requests', [VisitorAccessController::class, 'storeRequest'])->middleware('throttle:30,1');
+        Route::post('/requests', [VisitorAccessController::class, 'storeRequest'])->middleware('throttle:30,1,api-action-11:');
         Route::post('/requests/{id}/approve', [VisitorAccessController::class, 'approve'])->whereNumber('id');
         Route::post('/requests/{id}/reject', [VisitorAccessController::class, 'reject'])->whereNumber('id');
         Route::get('/passes', [VisitorAccessController::class, 'passes']);
@@ -165,9 +169,9 @@ Route::post(
         Route::get('/profile', [GuestAccountController::class, 'profile']);
         Route::patch('/profile', [GuestAccountController::class, 'updateProfile']);
         Route::get('/vehicles', [GuestAccountController::class, 'vehicles']);
-        Route::post('/vehicles', [GuestAccountController::class, 'storeVehicle'])->middleware('throttle:20,1');
+        Route::post('/vehicles', [GuestAccountController::class, 'storeVehicle'])->middleware('throttle:20,1,api-action-12:');
         Route::get('/requests', [GuestAccountController::class, 'requests']);
-        Route::post('/requests', [GuestAccountController::class, 'storeRequest'])->middleware('throttle:20,1');
+        Route::post('/requests', [GuestAccountController::class, 'storeRequest'])->middleware('throttle:20,1,api-action-13:');
         Route::post('/requests/{id}/cancel', [GuestAccountController::class, 'cancelRequest'])->whereNumber('id');
         Route::get('/passes', [GuestAccountController::class, 'passes']);
         Route::get('/visits', [GuestAccountController::class, 'visits']);
@@ -175,7 +179,7 @@ Route::post(
 
     // Development-only gate simulator (config/pass.php); 404 unless enabled for the tester.
     Route::get('/dev/simulator', [DeviceSimulatorController::class, 'index']);
-    Route::post('/dev/simulator/scan', [DeviceSimulatorController::class, 'scan'])->middleware('throttle:60,1');
+    Route::post('/dev/simulator/scan', [DeviceSimulatorController::class, 'scan'])->middleware('throttle:60,1,api-action-14:');
 
     Route::get('/violation-types', [ViolationController::class, 'types']);
     Route::get('/violations', [ViolationController::class, 'index']);
@@ -202,6 +206,7 @@ Route::post(
         Route::patch('/parking/slots', [ParkingSlotSimulationController::class, 'update']);
 
         Route::get('/users', [UserManagementController::class, 'index']);
+        Route::post('/users', [UserManagementController::class, 'store'])->middleware('throttle:10,1,staff-create:');
 
         Route::patch(
             '/users/{id}/approve',

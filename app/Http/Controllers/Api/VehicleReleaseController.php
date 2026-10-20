@@ -48,7 +48,12 @@ class VehicleReleaseController extends Controller
             'reason' => 'required|string|min:10|max:1000', 'acknowledged' => 'required|accepted',
             'exception_reason' => 'prohibited',
         ]);
-        $id = DB::transaction(function () use ($request, $data) {
+        $reference = DB::table('parking_transactions')->where('transaction_id', $data['transaction_id'])->first();
+        abort_unless($reference, 409, 'Select a currently parked vehicle.');
+        $ownerReference = DB::table('vehicles')->where('vehicle_id', $reference->vehicle_id)->value('owner_user_id');
+        $id = DB::transaction(function () use ($ownerReference, $reference, $request, $data) {
+            if ($ownerReference) DB::table('users')->where('user_id', $ownerReference)->lockForUpdate()->first();
+            DB::table('vehicles')->where('vehicle_id', $reference->vehicle_id)->lockForUpdate()->first();
             $session = DB::table('parking_transactions')->where('transaction_id', $data['transaction_id'])->lockForUpdate()->first();
             abort_unless($session && $session->transaction_status === 'active', 409, 'Select a currently parked vehicle.');
             $owner = DB::table('vehicles')->where('vehicle_id', $session->vehicle_id)->value('owner_user_id');
@@ -66,16 +71,20 @@ class VehicleReleaseController extends Controller
             $this->audit($request, $id, 'vehicle_release_requested');
             ParkingNotifier::notifyStaff('vehicle_release_requested', 'Emergency vehicle release request', 'Review substitute driver details before releasing the vehicle.', 'vehicle_release_requests', $id);
             return $id;
-        });
+        }, 3);
         return response()->json(['message' => 'Release requested. Staff must inspect the actual driver and physical license. Valid for two hours and one exit only.', 'release_id' => $id], 201);
     }
 
     public function act(Request $request, int $id, ParkingAccessService $access)
     {
         $data = $request->validate(['action' => 'required|in:reject,cancel,release', 'remarks' => 'nullable|string|max:1000', 'identity_checked' => 'nullable|boolean', 'authorization_checked' => 'nullable|boolean']);
-        return DB::transaction(function () use ($request, $id, $data, $access) {
-            $reference = DB::table('vehicle_release_requests')->where('release_id', $id)->first();
-            abort_unless($reference, 404);
+        $reference = DB::table('vehicle_release_requests')->where('release_id', $id)->first();
+        abort_unless($reference, 404);
+        $sessionReference = DB::table('parking_transactions')->where('transaction_id', $reference->transaction_id)->first();
+        abort_unless($sessionReference, 409, 'The parking session no longer exists.');
+        return DB::transaction(function () use ($sessionReference, $reference, $request, $id, $data, $access) {
+            DB::table('users')->where('user_id', $reference->owner_user_id)->lockForUpdate()->first();
+            DB::table('vehicles')->where('vehicle_id', $sessionReference->vehicle_id)->lockForUpdate()->first();
             $staff = $request->user()->canManageParking();
             $own = (int) $reference->owner_user_id === (int) $request->user()->user_id;
             abort_unless($data['action'] === 'cancel' ? ($own || $staff) : $staff, 403);
@@ -101,7 +110,7 @@ class VehicleReleaseController extends Controller
             $this->audit($request, $id, 'vehicle_release_'.$action);
             ParkingNotifier::notifyUser($row->owner_user_id, 'vehicle_release_updated', 'Vehicle release update', 'Emergency vehicle release request #'.$id.' is '.$update['status'].'.', 'vehicle_release_requests', $id);
             return response()->json(['message' => $action === 'release' ? 'Vehicle exit recorded under the owner-authorized substitute driver. Slot released.' : 'Release request '.$update['status'].'.']);
-        });
+        }, 3);
     }
 
     private function audit(Request $request, int $id, string $action): void

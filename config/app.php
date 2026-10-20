@@ -14,6 +14,7 @@ return [
     */
 
     'name' => env('APP_NAME', 'Laravel'),
+    'frontend_url' => env('FRONTEND_URL', in_array(env('APP_ENV'), ['local', 'testing'], true) ? 'http://localhost:8444' : null),
 
     /*
     |--------------------------------------------------------------------------
