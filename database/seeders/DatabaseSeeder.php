@@ -12,6 +12,8 @@ class DatabaseSeeder extends Seeder
             RoleSeeder::class,
             DepartmentSeeder::class,
             VehicleTypeSeeder::class,
+            ParkingAreaSeeder::class,
+            ViolationTypeSeeder::class
         ]);
     }
 }

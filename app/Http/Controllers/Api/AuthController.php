@@ -6,14 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Models\Department;
 use App\Models\Role;
 use App\Models\User;
-use App\Models\Vehicle;
-use App\Models\VehicleType;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Storage;
 use Throwable;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
@@ -22,346 +20,115 @@ class AuthController extends Controller
 {
     public function register(Request $request): JsonResponse
     {
-        // Normalize the plate number before checking uniqueness.
-        $request->merge([
-            'plate_number' => strtoupper(
-                trim((string) $request->input('plate_number'))
-            ),
-        ]);
-
-        $hasVehicle = $request->boolean('has_vehicle');
-
+        $category = $request->input('registration_category');
+        $userType = $category === 'employee' ? 'employee' : 'student';
+        $request->merge(['email' => strtolower(trim((string) $request->input('email')))]);
+        if (is_string($request->input('section'))) $request->merge(['section' => mb_strtoupper(preg_replace('/\s+/u', ' ', trim($request->input('section'))))]);
         $data = $request->validate([
-            'full_name' => [
-                'required',
-                'string',
-                'max:200',
-                'regex:/\S+\s+\S+/',
-            ],
-
-            'user_code' => [
-                'required',
-                'string',
-                'max:50',
-                'unique:users,user_code',
-            ],
-
-            'email' => [
-                'required',
-                'email',
-                'max:255',
-                'unique:users,email',
-            ],
-
-            'password' => [
-                'required',
-                'string',
-                'min:8',
-                'confirmed',
-            ],
-
-            'user_type' => [
-                'required',
-                Rule::in([
-                    'student',
-                    'faculty',
-                    'employee',
-                    'other',
-                ]),
-            ],
-
-            'department' => [
-                'required',
-                'exists:departments,department_name',
-            ],
-
-            'contact_number' => [
-                'required',
-                'string',
-                'max:30',
-            ],
-
-            'has_vehicle' => [
-                'required',
-                'boolean',
-            ],
-
-            'school_id_file' => [
-                'required',
-                'file',
-                'mimes:jpg,jpeg,png,pdf',
-                'max:5120',
-            ],
-
-            // Vehicle information is required only when has_vehicle is true.
-            'vehicle_type' => [
-                Rule::requiredIf($hasVehicle),
-                'nullable',
-                'exists:vehicle_types,type_name',
-            ],
-
-            'plate_number' => [
-                Rule::requiredIf($hasVehicle),
-                'nullable',
-                'string',
-                'max:20',
-                'unique:vehicles,plate_number',
-            ],
-
-            'make' => [
-                Rule::requiredIf($hasVehicle),
-                'nullable',
-                'string',
-                'max:100',
-            ],
-
-            'model' => [
-                Rule::requiredIf($hasVehicle),
-                'nullable',
-                'string',
-                'max:100',
-            ],
-
-            'color' => [
-                Rule::requiredIf($hasVehicle),
-                'nullable',
-                'string',
-                'max:50',
-            ],
-
-            'license_number' => [
-                Rule::requiredIf($hasVehicle),
-                'nullable',
-                'string',
-                'max:100',
-                'unique:driver_licenses,license_number',
-            ],
-
-            'license_type' => [
-                Rule::requiredIf($hasVehicle),
-                'nullable',
-                Rule::in([
-                    'student_permit',
-                    'non_professional',
-                    'professional',
-                    'international',
-                ]),
-            ],
-
-            'license_expiry' => [
-                Rule::requiredIf($hasVehicle),
-                'nullable',
-                'date',
-                'after_or_equal:today',
-            ],
-
-            'license_file' => [
-                Rule::requiredIf($hasVehicle),
-                'nullable',
-                'file',
-                'mimes:jpg,jpeg,png,pdf',
-                'max:5120',
-            ],
+            'registration_category' => ['required', Rule::in(\App\Services\Registration\InstitutionalIdRules::CATEGORIES)],
+            'first_name' => ['required', 'string', 'max:100', "regex:/^[\\pL\\pM][\\pL\\pM .'-]*$/u"],
+            'last_name' => ['required', 'string', 'max:100', "regex:/^[\\pL\\pM][\\pL\\pM .'-]*$/u"],
+            'suffix' => ['nullable', 'string', 'regex:/^(?:Jr\.?|Sr\.?|I|II|III|IV|V|VI|VII|VIII|IX|X)$/i'],
+            'middle_initial' => ['nullable', 'string', 'regex:/^\pL\.?$/u'],
+            'user_code' => ['required', 'string', 'max:50', function ($attr, $value, $fail) use ($category) {
+                if (in_array($category, \App\Services\Registration\InstitutionalIdRules::CATEGORIES, true)
+                    && ($problem = \App\Services\Registration\InstitutionalIdRules::idProblem($category, $value))) $fail($problem);
+            }],
+            'email' => ['required', 'email', 'max:255', 'unique:users,email'],
+            'password' => ['bail', 'string', new \App\Rules\PasswordBytes, 'required', 'string', 'min:8', 'confirmed'],
+            'user_type' => ['sometimes', Rule::in([$userType])],
+            'department' => ['required', 'string', 'max:150'],
+            'year_level' => [Rule::requiredIf($category === 'shs'), Rule::prohibitedIf($category !== 'shs'), 'nullable', Rule::in(['11', '12'])],
+            'section' => [Rule::requiredIf($category === 'shs'), Rule::prohibitedIf($category !== 'shs'), 'nullable', 'string', 'max:60', 'not_regex:/[<>\x00-\x1F\x7F]/'],
+            'contact_number' => ['required', 'string', 'max:30'],
+            'school_id_file' => ['required', 'file', 'mimes:jpg,jpeg,png,pdf', 'mimetypes:image/jpeg,image/png,application/pdf', 'max:5120'],
+            'id_check_receipt' => ['required', 'string', 'max:30000'],
+            'agree' => ['required', 'accepted'],
+            'request_manual_review' => ['sometimes', 'boolean'],
+            // Vehicle enrollment belongs to the signed-in vehicle workflow.
+            'has_vehicle' => ['sometimes', 'boolean', Rule::in([false, 0, '0'])],
+            'vehicle_type' => ['prohibited'], 'plate_number' => ['prohibited'], 'make' => ['prohibited'],
+            'model' => ['prohibited'], 'color' => ['prohibited'], 'license_number' => ['prohibited'],
+            'license_type' => ['prohibited'], 'license_expiry' => ['prohibited'], 'license_file' => ['prohibited'],
         ]);
-
-        // Find the department before storing files.
-        $department = Department::where(
-            'department_name',
-            $data['department']
-        )->firstOrFail();
-
-        $type = null;
-
-        if ($hasVehicle) {
-            $type = VehicleType::where(
-                'type_name',
-                $data['vehicle_type']
-            )->firstOrFail();
+        $number = \App\Services\Registration\InstitutionalIdRules::format($category, $data['user_code']);
+        // Keep normalized IDs unique even if older records used another separator.
+        if (DB::table('users')->whereRaw("REPLACE(REPLACE(UPPER(user_code), '-', ''), ' ', '') = ?", [strtoupper(\App\Services\Registration\InstitutionalIdRules::digits($number))])->exists()) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['user_code' => 'This institutional ID number is already registered. Sign in or recover your account.']);
         }
-
-        // Split the name into first and last name.
-        $nameParts = preg_split(
-    '/\s+/',
-    trim($data['full_name'])
-);
-
-$lastName = array_pop($nameParts);
-$firstName = implode(' ', $nameParts);
-
+        $department = Department::where('department_name', trim($data['department']))->where('is_active', true)->first();
+        if ($category === 'college' && (!$department || in_array(strtoupper($department->department_code), ['SHS', 'JHS', 'BED'], true))) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['department' => 'Choose an active college department.']);
+        }
+        $unit = $category === 'shs' ? 'Senior High School' : trim($data['department']);
+        if ($category === 'shs') $department = Department::where('department_code', 'SHS')->where('is_active', true)->first();
+        $file = $request->file('school_id_file');
+        $size = @getimagesize($file->getRealPath());
+        if ($size && $size[0]*$size[1] > 20000000) throw \Illuminate\Validation\ValidationException::withMessages(['school_id_file' => 'Use a photo with at most 20 megapixels.']);
+        $evidence = app(\App\Services\Registration\InstitutionalIdReceipt::class)->read($data['id_check_receipt'], $file, $category);
+        $rules = app(\App\Services\Registration\InstitutionalIdRules::class);
+        $check = $rules->requestManualReview($rules->evaluate($category, $evidence, $data), $request->boolean('request_manual_review'));
+        if ($check['status'] === 'needs_correction') {
+            throw \Illuminate\Validation\ValidationException::withMessages(['school_id_file' => 'The document and submitted details could not be matched. Check your details or upload a clearer ID.']);
+        }
+        $check['activation_policy'] = 'matched-id-and-email-v1';
+        $check['identity_hash'] = \App\Services\Registration\RegistrationActivation::identity($category, $number, $data['first_name'], $data['last_name'], $data['middle_initial'] ?? '', $data['suffix'] ?? '');
+        $path = $file->store('school-ids', 'private');
+        if (!$path) return response()->json(['message' => 'The ID could not be stored. Please try again.'], 500);
         try {
-            // Store documents on a private disk, not in public storage.
-            $schoolIdPath = $request->file('school_id_file')
-                ->store('school-ids', 'private');
-
-            if (! $schoolIdPath) {
-                throw new \RuntimeException(
-                    'Unable to store the school ID document.'
-                );
-            }
-
-            $storedFiles[] = $schoolIdPath;
-
-            $licensePath = null;
-
-            if ($hasVehicle) {
-                $licensePath = $request->file('license_file')
-                    ->store('driver-licenses', 'private');
-
-                if (! $licensePath) {
-                    throw new \RuntimeException(
-                        'Unable to store the driver license document.'
-                    );
-                }
-
-                $storedFiles[] = $licensePath;
-            }
-
-            $user = DB::transaction(function () use (
-                $data,
-                $hasVehicle,
-                $department,
-                $type,
-                $firstName,
-                $lastName,
-                $schoolIdPath,
-                $licensePath
-            ) {
-                // Create the account as pending. Do not auto-approve it.
-                $user = User::create([
-                    'user_code' => $data['user_code'],
-                    'email' => $data['email'],
-                    'password' => $data['password'],
-                    'user_type' => $data['user_type'],
-                    'account_status' => 'pending',
+            $user = DB::transaction(function () use ($data, $userType, $number, $department, $unit, $check, $path, $request) {
+                $user = User::create(['user_code' => $number, 'email' => $data['email'], 'password' => $data['password'],
+                    'user_type' => $userType, 'account_status' => 'pending']);
+                $user->profile()->create([
+                    'department_id' => $department?->department_id, 'registration_category' => $data['registration_category'], 'registration_unit' => $unit,
+                    'first_name' => mb_strtoupper(trim($data['first_name'])), 'last_name' => mb_strtoupper(trim($data['last_name'])),
+                    'middle_name' => empty($data['middle_initial']) ? null : mb_strtoupper(rtrim($data['middle_initial'], '.')).'.',
+                    'suffix' => mb_strtoupper(\App\Services\Registration\InstitutionalIdRules::suffix($data['suffix'] ?? '')) ?: null,
+                    'year_level' => $data['registration_category'] === 'shs' ? (string) $data['year_level'] : null,
+                    'section' => $data['registration_category'] === 'shs' ? $data['section'] : null,
+                    'contact_number' => trim($data['contact_number']), 'school_id_document_path' => $path,
+                    'school_id_check_status' => $check['status'], 'school_id_check_result' => $check,
                 ]);
-
-                $profile = $user->profile()->create([
-                    'department_id' => $department->department_id,
-                    'first_name' => $firstName,
-                    'last_name' => $lastName,
-                    'contact_number' => $data['contact_number'],
-                ]);
-
-                // Requires school_id_document_path to exist in user_profiles.
-                $profile->forceFill([
-                    'school_id_document_path' => $schoolIdPath,
-                ])->save();
-
-                // Regular users receive only their matching regular-user role.
-                // "other" receives no role until an administrator assigns one.
-                if (in_array(
-                    $data['user_type'],
-                    ['student', 'faculty', 'employee'],
-                    true
-                )) {
-                    $role = Role::where(
-                        'role_code',
-                        $data['user_type']
-                    )->first();
-
-                    if ($role) {
-                        $user->roles()->syncWithoutDetaching([
-                            $role->role_id,
-                        ]);
-                    }
-                }
-
-                if ($hasVehicle) {
-
-
-$vehicle = Vehicle::create([
-    'owner_user_id' => $user->user_id,
-    'vehicle_type_id' => $type->vehicle_type_id,
-    'plate_number' => $data['plate_number'],
-    'make' => $data['make'] ?? null,
-    'model' => $data['model'] ?? null,
-    'color' => $data['color'] ?? null,
-    'registration_status' => 'registered',
-]);
-
-$vehicle->authorizations()->create([
-    'authorization_status' => 'pending',
-    'active_flag' => true,
-]);
-
-
-
-                    // Create the driver record using the same registrant.
-                    $driverId = DB::table('drivers')->insertGetId([
-                        'user_id' => $user->user_id,
-                        'first_name' => $firstName,
-                        'middle_name' => null,
-                        'last_name' => $lastName,
-                        'contact_number' => $data['contact_number'],
-                        'driver_status' => 'active',
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ], 'driver_id');
-
-                    // Save the driver's license details and private file path.
-
-DB::table('driver_licenses')->insert([
-    'driver_id' => $driverId,
-    'license_number' => $data['license_number'],
-    'license_type' => $data['license_type'],
-    'restriction_codes' => null,
-    'issue_date' => null,
-    'expiry_date' => $data['license_expiry'],
-    'issuing_agency' => null,
-    'license_image_path' => $licensePath,
-    'license_status' => 'valid',
-    'current_flag' => true,
-    'created_at' => now(),
-    'updated_at' => now(),
-]);
-
-
-                    // Link the vehicle to the registered driver.
-                    DB::table('vehicle_driver')->insert([
-                        'vehicle_id' => $vehicle->vehicle_id,
-                        'driver_id' => $driverId,
-                        'relationship' => 'owner',
-                        'is_primary' => true,
-                        'authorized_from' => null,
-                        'authorized_until' => null,
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
-                }
-
+                $role = Role::where('role_code', $userType)->where('is_active', true)->firstOrFail();
+                $user->roles()->syncWithoutDetaching([$role->role_id => ['assigned_at' => now()]]);
+                \App\Support\ActivityAudit::record($request, $user, 'account_registered', 'users', (int) $user->user_id, null,
+                    ['account_status'=>'pending', 'user_type'=>$userType, 'registration_category'=>$data['registration_category'], 'id_check_status'=>$check['status']]);
                 return $user;
             });
-
-            return response()->json([
-                'message' =>
-                    'Registration submitted. Your account is pending approval.',
-                'user' => $this->userPayload($user),
-            ], 201);
         } catch (Throwable $exception) {
-            // If the database transaction fails, remove uploaded files too.
-            foreach ($storedFiles as $path) {
-                Storage::disk('private')->delete($path);
+            Storage::disk('private')->delete($path);
+            if ($exception instanceof \Illuminate\Database\QueryException && in_array((string) $exception->getCode(), ['23000', '23505'], true)) {
+                return response()->json(['message'=>'This email or ID number is already registered. Sign in or recover your account.'], 422);
             }
-
             report($exception);
-
-            return response()->json([
-                'message' =>
-                    'Registration could not be completed. Please try again.',
-            ], 500);
+            return response()->json(['message'=>'Registration could not be completed. Please try again.'], 500);
         }
+        // Mail failure never rolls back an already committed registration/document.
+        $sent = false;
+        try { app(\App\Services\Auth\EmailVerificationCodes::class)->send($user); $sent = true; }
+        catch (Throwable $error) { report($error); }
+        return response()->json([
+            'message' => $sent ? ($category === 'shs' ? 'SHS registration saved. Verify your email next; PASS staff must approve your account.' : 'Registration saved. Verify your email next. Matching IDs activate automatically; uncertain checks require staff review.') : 'Registration saved, but the verification email could not be sent. Use Send / resend code to try again.',
+            'email_verification_sent' => $sent, 'id_check' => \App\Services\Registration\PublicIdCheck::summary($check), 'user' => $this->userPayload($user),
+        ], 201);
     }
 
     public function login(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'identifier' => ['required', 'string'],
-            'password' => ['required', 'string'],
+            'identifier' => ['required', 'string', 'max:255'],
+            'password' => ['required', 'string', 'max:1024'],
         ]);
 
-        $user = User::where('email', $data['identifier'])
-            ->orWhere('user_code', $data['identifier'])
-            ->first();
+        $identifier = trim($data['identifier']);
+        $user = User::where('email', $identifier)->orWhere('user_code', $identifier)->first();
+        $numericId = \App\Services\Registration\InstitutionalIdRules::digits($identifier);
+        if (!$user && preg_match('/^(?:\d{7}|\d{9}|\d{12})$/D', $numericId)) {
+            // Both printed and digits-only institutional numbers may sign in.
+            // Legacy ambiguous normalized IDs require the exact saved ID or email.
+            $matches = User::whereRaw("REPLACE(REPLACE(user_code, '-', ''), ' ', '') = ?", [$numericId])->limit(2)->get();
+            if ($matches->count() === 1) $user = $matches->first();
+        }
 
         if (! $user || ! Hash::check(
             $data['password'],
@@ -380,7 +147,18 @@ DB::table('driver_licenses')->insert([
             ], 401);
         }
 
-        if ($user->account_status !== 'active') {
+        // PASS_PRIVILEGED_ACCOUNT_SETUP: restricted first-login session.
+        if ($setup = app(\App\Services\Auth\PrivilegedAccounts::class)->setupLogin($request, $user)) return $setup;
+
+        if (($user->isGuest() || in_array($user->user_type, ['student', 'faculty', 'employee', 'other'], true)) && !$user->hasVerifiedEmail()) {
+            $this->logAttempt($request, $user, $data['identifier'], false, 'email_unverified');
+            return response()->json([
+                'message' => 'Please verify your email address before signing in. Open Verify email to request and enter your verification code.',
+                'code' => 'email_unverified',
+            ], 403);
+        }
+
+        if ($user->account_status !== 'active' && !($user->account_status === 'pending' && in_array($user->user_type, ['student', 'faculty', 'employee', 'other'], true) && !$user->isGuest())) {
             $this->logAttempt(
                 $request,
                 $user,
@@ -415,6 +193,8 @@ DB::table('driver_licenses')->insert([
             'last_login_at' => now(),
         ])->save();
 
+        \App\Support\ActivityAudit::record($request, $user, 'login', 'users', (int) $user->user_id);
+
         return response()->json([
             'token' => $user->createToken('web')->plainTextToken,
             'user' => $this->userPayload($user),
@@ -430,6 +210,7 @@ DB::table('driver_licenses')->insert([
 
     public function logout(Request $request): JsonResponse
     {
+        \App\Support\ActivityAudit::record($request, $request->user(), 'logout', 'users', (int) $request->user()->user_id);
         $request->user()->currentAccessToken()->delete();
 
         return response()->json([
@@ -450,12 +231,20 @@ DB::table('driver_licenses')->insert([
             'id' => (string) $user->user_id,
             'name' => trim(
                 ($profile->first_name ?? '') . ' ' .
-                ($profile->last_name ?? '')
+                ($profile->last_name ?? '') . ' ' . ($profile->suffix ?? '')
             ),
             'email' => $user->email,
             'role' => $user->roles->first()?->role_code,
             'idNum' => $user->user_code,
-            'dept' => $profile?->department?->department_name,
+            'dept' => $profile?->registration_unit ?: $profile?->department?->department_name,
+            'registrationCategory' => $profile?->registration_category,
+            'yearLevel' => $profile?->year_level,
+            'section' => $profile?->section,
+            'schoolIdCheckStatus' => $profile?->school_id_check_status,
+            'accountStatus' => $user->account_status,
+            'emailVerified' => $user->hasVerifiedEmail(),
+            'accountSetup' => app(\App\Services\Auth\PrivilegedAccounts::class)->state($user),
+            'schoolIdSubmitted' => !empty($profile?->school_id_document_path),
         ];
     }
 
@@ -481,15 +270,19 @@ DB::table('driver_licenses')->insert([
         ]);
     }
 
+
 public function forgotPassword(Request $request): JsonResponse
 {
     $data = $request->validate([
         'email' => ['required', 'email', 'max:255'],
     ]);
 
-    $status = Password::sendResetLink([
-        'email' => $data['email'],
-    ]);
+    try {
+        $status = Password::sendResetLink(['email' => $data['email']]);
+    } catch (Throwable $error) {
+        report($error);
+        return response()->json(['message' => 'Email delivery is unavailable. Please try again later.'], 503);
+    }
 
     // Avoid revealing whether an email exists in the database.
     if ($status === Password::RESET_LINK_SENT ||
@@ -522,22 +315,19 @@ public function resetPassword(Request $request): JsonResponse
     $data = $request->validate([
         'token' => ['required', 'string'],
         'email' => ['required', 'email', 'max:255'],
-        'password' => ['required', 'string', 'min:8', 'confirmed'],
+        'password' => ['bail', 'string', new \App\Rules\PasswordBytes, 'required', 'string', 'min:8', 'confirmed'],
     ]);
 
-    $status = Password::reset(
-        $data,
-        function (User $user, string $password): void {
-            // The User model's "hashed" cast hashes the new password.
-            $user->forceFill([
-                'password' => $password,
-                'remember_token' => Str::random(60),
-            ])->save();
-
-            // Revoke existing API sessions after a password change.
+    $status = DB::transaction(function () use ($data, $request) {
+        // Serialize token consumption with the account password update. A
+        // second reset waits, then sees the already-consumed database token.
+        User::where('email', $data['email'])->lockForUpdate()->first();
+        return Password::reset($data, function (User $user, string $password) use ($request): void {
+            $user->forceFill(['password' => $password, 'remember_token' => Str::random(60)])->save();
             $user->tokens()->delete();
-        }
-    );
+            \App\Support\ActivityAudit::record($request, $user, 'password_reset', 'users', (int) $user->user_id);
+        });
+    }, 3);
 
     if ($status === Password::PASSWORD_RESET) {
         return response()->json([

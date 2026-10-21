@@ -3,8 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\User;
-use App\Models\Vehicle;
+use App\Services\Parking\ParkingStats;
+use App\Support\CampusTime;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -13,96 +13,68 @@ class AdminDashboardController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $actor = $request->user();
+        abort_unless($request->user()?->isAdmin(), 403);
+        $totalTags = DB::table('rfid_tags')->count();
 
-        $isAdmin = $actor
-            && $actor->account_status === 'active'
-            && $actor->roles()
-                ->whereIn('role_code', ['admin', 'parking_admin'])
-                ->where('is_active', true)
-                ->exists();
-
-        if (! $isAdmin) {
-            return response()->json([
-                'message' => 'You are not authorized to view the admin dashboard.',
-            ], 403);
-        }
-
-        $today = now()->toDateString();
-
-$parkingOccupancy = DB::table('parking_zones as z')
-    ->where('z.is_active', true)
-    ->select([
-        'z.zone_id',
-        'z.zone_code',
-        'z.zone_name',
-        'z.declared_capacity',
-    ])
-    ->orderBy('z.zone_name')
-    ->get()
-    ->map(function ($zone) {
-        $activeTransactions = DB::table('parking_transactions as pt')
-            ->join('parking_slots as ps', 'ps.slot_id', '=', 'pt.slot_id')
-            ->where('ps.zone_id', $zone->zone_id)
-            ->where('pt.transaction_status', 'active')
-            ->whereNull('pt.exit_datetime')
-            ->whereNotNull('pt.slot_id');
-
-        $occupied = (clone $activeTransactions)
-            ->distinct()
-            ->count('pt.slot_id');
-
-        $occupiedSlotIds = DB::table('parking_transactions')
-            ->select('slot_id')
-            ->where('transaction_status', 'active')
-            ->whereNull('exit_datetime')
-            ->whereNotNull('slot_id');
-
-        $available = DB::table('parking_slots')
-            ->where('zone_id', $zone->zone_id)
-            ->where('slot_status', 'available')
-            ->whereNotIn('slot_id', $occupiedSlotIds)
+        $assignedTags = DB::table('rfid_tags')
+            ->where('tag_status', 'assigned')
             ->count();
 
-        return [
-            'zone_id' => $zone->zone_id,
-            'zone' => $zone->zone_name,
-            'capacity' => (int) $zone->declared_capacity,
-            'occupied' => $occupied,
-            'available' => $available,
-        ];
-    })
-    ->values();
-
+        [$start, $end] = CampusTime::dayRange();
 
         return response()->json([
             'summary' => [
-                'total_users' => User::count(),
-                'total_vehicles' => Vehicle::count(),
-                'total_rfid_tags' => DB::table('rfid_tags')->count(),
-                'assigned_rfid_tags' => DB::table('rfid_assignments')
-                    ->where('assignment_status', 'active')
-                    ->whereNull('unassigned_at')
+                'total_users' => DB::table('users')
+                    ->whereNull('deleted_at')
                     ->count(),
+
+                'total_vehicles' => DB::table('vehicles')
+                    ->whereNull('deleted_at')
+                    ->count(),
+
+                'total_rfid_tags' => $totalTags,
+                'assigned_rfid_tags' => $assignedTags,
                 'available_rfid_tags' => DB::table('rfid_tags')
                     ->where('tag_status', 'available')
                     ->count(),
-                'pending_approvals' => User::where('account_status', 'pending')->count(),
+
+                'pending_approvals' => DB::table('users')
+                    ->whereNull('deleted_at')
+                    ->where('account_status', 'pending')
+                    ->count(),
+
                 'pending_vehicle_authorizations' => DB::table('vehicle_authorizations')
                     ->where('authorization_status', 'pending')
                     ->count(),
             ],
+
             'today_activity' => [
-                'entries' => DB::table('access_events')
-                    ->where('direction', 'in')
-                    ->whereDate('event_datetime', $today)
+                'entries' => DB::table('parking_transactions')
+                    ->where('entry_datetime', '>=', $start)->where('entry_datetime', '<', $end)
+                    ->where('transaction_status', '<>', 'cancelled')
                     ->count(),
-                'exits' => DB::table('access_events')
-                    ->where('direction', 'out')
-                    ->whereDate('event_datetime', $today)
+
+                'exits' => DB::table('parking_transactions')
+                    ->where('exit_datetime', '>=', $start)->where('exit_datetime', '<', $end)
+                    ->whereIn('transaction_status', ['completed', 'force_closed'])
                     ->count(),
             ],
-            'parking_occupancy' => $parkingOccupancy,
+
+            'parking_occupancy' => $this->occupancyRows(),
         ]);
+    }
+    public function occupancy(Request $request): JsonResponse
+    {
+        abort_unless($request->user()?->isAdmin(), 403);
+        $areas = ParkingStats::areas();
+        return response()->json(['data' => $this->occupancyRows(), 'overall' => ParkingStats::overall($areas)]);
+    }
+
+    private function occupancyRows(): array
+    {
+        return array_values(array_map(fn ($area) => [
+            'zone_id' => $area['parking_area_id'], 'zone' => $area['area_name'],
+            'capacity' => $area['capacity'], 'occupied' => $area['occupied'], 'available' => $area['available'],
+        ], ParkingStats::areas()));
     }
 }
