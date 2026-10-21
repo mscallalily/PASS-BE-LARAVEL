@@ -45,7 +45,7 @@ class GuestAccountController extends Controller
             'full_name' => ['required', 'string', 'max:200', 'regex:/^\S+(\s+\S+)+$/u'],
             'email' => ['required', 'string', 'email:rfc', 'max:255', Rule::unique('users', 'email')],
             'contact_number' => ['required', 'string', 'regex:' . self::MOBILE],
-            'password' => ['required', 'confirmed', Password::min(8)->letters()->numbers()],
+            'password' => ['bail', 'string', new \App\Rules\PasswordBytes, 'required', 'confirmed', Password::min(8)->letters()->numbers()],
             'agree' => ['accepted'],
         ], [
             'full_name.regex' => 'Enter your first and last name.',
@@ -183,7 +183,7 @@ class GuestAccountController extends Controller
         $plate = strtoupper(preg_replace('/\s+/', ' ', trim($data['plate_number'])));
 
         $vehicleId = DB::transaction(function () use ($visitor, $plate, $data) {
-            if (DB::table('vehicles')->where('plate_number', $plate)->where('owner_visitor_id', $visitor->visitor_id)->whereNull('deleted_at')->exists()) {
+            if (DB::table('vehicles')->whereRaw("REPLACE(REPLACE(UPPER(plate_number), '-', ''), ' ', '') = ?", [\App\Support\PlateNumber::key($plate)])->where('owner_visitor_id', $visitor->visitor_id)->whereNull('deleted_at')->exists()) {
                 throw ValidationException::withMessages(['plate_number' => "{$plate} is already one of your vehicles."]);
             }
 

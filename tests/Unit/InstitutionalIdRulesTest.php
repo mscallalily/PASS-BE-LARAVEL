@@ -25,7 +25,7 @@ class InstitutionalIdRulesTest extends TestCase
         $this->assertSame('022-1234', InstitutionalIdRules::format('employee', '022 1234'));
         $this->assertSame('2026-00123', InstitutionalIdRules::format('college', '202600123'));
         $this->assertNull(InstitutionalIdRules::idProblem('employee', '0271234', 2027));
-        $this->assertNull(InstitutionalIdRules::idProblem('shs', 'SHS-24-001', 2026));
+        $this->assertNull(InstitutionalIdRules::idProblem('shs', '000123456789', 2026));
     }
 
     public function test_ocr_number_extraction_does_not_truncate_or_drop_leading_zero(): void

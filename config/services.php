@@ -18,7 +18,7 @@ return [
     // official LTO verification service integrated, so staff confirm authenticity.
     'license_ocr' => [
         'tesseract_path' => env('TESSERACT_PATH', 'tesseract'),
-        'pdftotext_path' => env('PDFTOTEXT_PATH'),
+        'pdftotext_path' => env('PDFTOTEXT_PATH', 'pdftotext'),
         'timeout' => (int) env('LICENSE_OCR_TIMEOUT', 60),
     ],
 

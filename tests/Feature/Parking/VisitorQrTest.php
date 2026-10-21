@@ -27,7 +27,7 @@ class VisitorQrTest extends ParkingTestCase
             'first_name' => 'Rhea',
             'last_name' => 'Santos',
             'contact_number' => '09171234567',
-            'plate_number' => 'NEW ' . random_int(1000, 9999),
+            'plate_number' => $this->nextTestPlate('NEW'),
             'vehicle_type_id' => DB::table('vehicle_types')->where('type_code', 'sedan')->value('vehicle_type_id'),
             'driver_name' => 'Rhea Santos',
             'driver_license_number' => 'N01-23-456789',

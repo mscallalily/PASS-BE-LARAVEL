@@ -14,7 +14,7 @@ class RegistrationIdController extends Controller
 {
     public function options()
     {
-        return response()->json(['current_year' => CampusTime::now()->year, 'policy_version' => InstitutionalIdRules::POLICY,
+        return response()->json(['current_year' => CampusTime::now()->year,
             'categories' => InstitutionalIdRules::CATEGORIES, 'receipt_minutes' => 20]);
     }
 
@@ -40,7 +40,7 @@ class RegistrationIdController extends Controller
             $receipt = $data['id_check_receipt'];
         } else {
             try {
-                $evidence = $category === 'shs' ? ['kind' => 'image', 'engine_available' => false, 'fields' => []] : $reader->read($file->getRealPath(), $file->getMimeType(), $category);
+                $evidence = $reader->read($file->getRealPath(), $file->getMimeType(), $category);
             } catch (\Throwable $error) {
                 report($error);
                 $evidence = ['kind' => 'image', 'engine_available' => false, 'fields' => []];
@@ -53,8 +53,8 @@ class RegistrationIdController extends Controller
         }
         $result = $rules->requestManualReview($rules->evaluate($category, $evidence, $submitted), $request->boolean('request_manual_review'));
 
-        return response()->json(['data' => $result + [
-            'fields' => $evidence['fields'] ?? [], 'field_confidence' => $evidence['field_confidence'] ?? [],
+        return response()->json(['data' => \App\Services\Registration\PublicIdCheck::summary($result) + [
+            'fields' => array_map(fn ($v) => is_string($v) ? mb_strtoupper($v) : $v, $evidence['fields'] ?? []),
             'receipt' => $receipt, 'current_year' => CampusTime::now()->year,
         ]])->header('Cache-Control', 'no-store, private');
     }

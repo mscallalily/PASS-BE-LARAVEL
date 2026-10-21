@@ -20,6 +20,21 @@ abstract class ParkingTestCase extends TestCase
 {
     use DatabaseTransactions;
 
+    private static int $plateSequence = 1000;
+
+    /** Reserve distinct fixture values and skip existing/archived separator aliases. */
+    protected function nextTestPlate(string $prefix): string
+    {
+        do {
+            $plate = strtoupper($prefix) . ' ' . self::$plateSequence++;
+        } while (DB::table('vehicles')->whereRaw(
+            "REPLACE(REPLACE(UPPER(plate_number), '-', ''), ' ', '') = ?",
+            [\App\Support\PlateNumber::key($plate)]
+        )->exists());
+
+        return $plate;
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -76,7 +91,7 @@ abstract class ParkingTestCase extends TestCase
     protected function campusVehicle(string $typeCode = 'sedan', string $licenseVerification = 'verified', string $authorization = 'approved', string $userType = 'student'): array
     {
         $user = $this->user($userType);
-        $plate = 'TST ' . random_int(1000, 9999);
+        $plate = $this->nextTestPlate('TST');
         $vehicleId = DB::table('vehicles')->insertGetId([
             'owner_user_id' => $user->user_id,
             'vehicle_type_id' => DB::table('vehicle_types')->where('type_code', $typeCode)->value('vehicle_type_id'),
@@ -135,7 +150,7 @@ abstract class ParkingTestCase extends TestCase
         $visitorId = DB::table('visitors')->insertGetId([
             'first_name' => 'Vera', 'last_name' => 'Visitor', 'contact_number' => '09170000000', 'is_blacklisted' => false, 'created_at' => now(), 'updated_at' => now(),
         ], 'visitor_id');
-        $plate = 'VIS ' . random_int(1000, 9999);
+        $plate = $this->nextTestPlate('VIS');
         $vehicleId = DB::table('vehicles')->insertGetId([
             'owner_visitor_id' => $visitorId,
             'vehicle_type_id' => DB::table('vehicle_types')->where('type_code', $typeCode)->value('vehicle_type_id'),

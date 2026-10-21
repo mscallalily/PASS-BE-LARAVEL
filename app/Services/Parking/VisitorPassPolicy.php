@@ -29,6 +29,13 @@ class VisitorPassPolicy
             return self::LEGACY_REASON;
         }
 
+        $visitor = DB::table('visitors')->where('visitor_id', $pass->visitor_id)->first();
+        if (!$visitor || $visitor->is_blacklisted) return 'Visitor is unavailable or blacklisted.';
+        if ($visitor->user_id) {
+            $owner = DB::table('users')->where('user_id', $visitor->user_id)->first();
+            if (!$owner || $owner->deleted_at || $owner->account_status !== 'active' || !$owner->email_verified_at) return 'Visitor account is not active and verified.';
+        }
+
         $requestStatus = DB::table('visitor_requests')->where('request_id', $pass->request_id)->value('request_status');
 
         if ($requestStatus !== 'approved') {

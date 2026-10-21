@@ -12,7 +12,7 @@ class InstitutionalIdReceipt
     public function issue(UploadedFile $file, string $category, array $evidence): string
     {
         return Crypt::encryptString(json_encode([
-            'policy' => InstitutionalIdRules::POLICY, 'sha256' => hash_file('sha256', $file->getRealPath()),
+            'policy' => InstitutionalIdRules::policy($category), 'sha256' => hash_file('sha256', $file->getRealPath()),
             'category' => $category, 'expires_at' => now()->addMinutes(20)->timestamp, 'evidence' => $evidence,
         ], JSON_THROW_ON_ERROR));
     }
@@ -21,7 +21,7 @@ class InstitutionalIdReceipt
     {
         try {
             $data = json_decode(Crypt::decryptString((string) $receipt), true, 32, JSON_THROW_ON_ERROR);
-            if (($data['policy'] ?? '') !== InstitutionalIdRules::POLICY || ($data['category'] ?? '') !== $category
+            if (($data['policy'] ?? '') !== InstitutionalIdRules::policy($category) || ($data['category'] ?? '') !== $category
                 || ($data['expires_at'] ?? 0) <= now()->timestamp
                 || ! hash_equals($data['sha256'] ?? '', hash_file('sha256', $file->getRealPath()))) {
                 throw new \RuntimeException('Receipt does not match this upload.');

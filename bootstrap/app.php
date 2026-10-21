@@ -19,8 +19,19 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        //
+        $middleware->redirectGuestsTo('/login');
+        $middleware->prependToGroup('api', \App\Http\Middleware\NormalizeIdentityInput::class);
+        $middleware->appendToGroup('api', \App\Http\Middleware\RecordHistoryContext::class);
+        $middleware->appendToGroup('api', \App\Http\Middleware\PrivateApiResponses::class);
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        //
+        $exceptions->shouldRenderJsonWhen(fn ($request, \Throwable $error) => $request->is('api/*') || $request->expectsJson());
+        $exceptions->respond(function ($response) {
+            if (request()->is('api/*')) {
+                $response->headers->set('Cache-Control', 'private, no-store');
+                $response->headers->set('X-Content-Type-Options', 'nosniff');
+                $response->headers->set('Referrer-Policy', 'no-referrer');
+            }
+            return $response;
+        });
     })->create();

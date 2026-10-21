@@ -6,7 +6,7 @@ use Laravel\Sanctum\Sanctum;
 
 class StagingMergeTest extends ParkingTestCase
 {
-    public function test_admin_modules_are_restored_with_real_occupancy_and_explicit_logo_todo(): void
+    public function test_admin_modules_use_real_occupancy_and_unfinished_logo_route_is_absent(): void
     {
         $this->actingAsAdmin();
         $this->getJson('/api/admin/dashboard')->assertOk()->assertJsonStructure(['summary' => ['total_users', 'total_vehicles'], 'today_activity', 'parking_occupancy']);
@@ -14,7 +14,7 @@ class StagingMergeTest extends ParkingTestCase
         DB::table('audit_logs')->insert(['actor_label' => 'QA', 'action' => 'merge_test', 'new_values' => json_encode(['status' => 'approved']), 'created_at' => now()]);
         $this->getJson('/api/admin/audit-logs?search=merge_test')->assertOk()->assertJsonPath('data.0.new_values.status', 'approved');
         $this->getJson('/api/admin/system-settings')->assertOk();
-        $this->postJson('/api/admin/system-settings/logo')->assertStatus(501);
+        $this->postJson('/api/admin/system-settings/logo')->assertNotFound();
         $this->putJson('/api/admin/system-settings', ['system_name' => 'PASS', 'institution_name' => 'DYCI', 'contact_email' => 'test@example.test', 'timezone' => 'Asia/Manila', 'date_format' => 'MM/DD/YYYY'])->assertOk();
         $this->assertDatabaseHas('system_settings', ['setting_key' => 'system_name', 'setting_value' => 'PASS']);
     }
@@ -25,7 +25,7 @@ class StagingMergeTest extends ParkingTestCase
             Sanctum::actingAs($this->user($type));
             foreach (['/api/admin/dashboard', '/api/admin/parking/occupancy', '/api/admin/audit-logs', '/api/admin/system-settings'] as $url) $this->getJson($url)->assertForbidden();
             $this->putJson('/api/admin/system-settings', [])->assertForbidden();
-            $this->postJson('/api/admin/system-settings/logo')->assertForbidden();
+            $this->postJson('/api/admin/system-settings/logo')->assertNotFound();
         }
     }
 

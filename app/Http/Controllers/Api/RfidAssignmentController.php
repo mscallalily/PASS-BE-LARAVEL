@@ -30,7 +30,9 @@ class RfidAssignmentController extends Controller
             'valid_until' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:'.CampusTime::date()],
         ]);
         try {
-            $id = DB::transaction(function () use ($data, $request) {
+            $reference = DB::table('vehicles')->where('vehicle_id', $data['vehicle_id'])->first();
+            $id = DB::transaction(function () use ($reference, $data, $request) {
+                if ($reference?->owner_user_id) DB::table('users')->where('user_id', $reference->owner_user_id)->lockForUpdate()->first();
                 $today = CampusTime::date();
                 $vehicle = DB::table('vehicles')->where('vehicle_id', $data['vehicle_id'])->lockForUpdate()->first();
                 if (!$vehicle || $vehicle->deleted_at || $vehicle->registration_status !== 'registered' || !$vehicle->owner_user_id) {
@@ -70,7 +72,7 @@ class RfidAssignmentController extends Controller
                 DB::table('user_vehicle_selections')->insertOrIgnore(['user_id' => $owner->user_id, 'vehicle_id' => $vehicle->vehicle_id, 'updated_at' => now()]);
                 $this->audit($request, $id, 'rfid_assigned');
                 return $id;
-            });
+            }, 3);
         } catch (QueryException $exception) {
             if (($exception->errorInfo[1] ?? null) === 1062) {
                 throw ValidationException::withMessages(['tag_uid' => 'The tag was assigned by another request. Refresh and try again.']);
@@ -83,21 +85,22 @@ class RfidAssignmentController extends Controller
     public function revoke(Request $request, int $id): JsonResponse
     {
         $this->authorizeAdmin($request);
-        return DB::transaction(function () use ($request, $id) {
-            $reference = DB::table('rfid_assignments')->where('assignment_id', $id)->first();
-            abort_unless($reference, 404);
+        $reference = DB::table('rfid_assignments')->where('assignment_id', $id)->first();
+        abort_unless($reference, 404);
+        return DB::transaction(function () use ($reference, $request, $id) {
+            if ($reference->user_id) DB::table('users')->where('user_id', $reference->user_id)->lockForUpdate()->first();
             if ($reference->vehicle_id) DB::table('vehicles')->where('vehicle_id', $reference->vehicle_id)->lockForUpdate()->first();
             $assignment = DB::table('rfid_assignments')->where('assignment_id', $id)->lockForUpdate()->first();
             abort_unless($assignment, 404);
             if ($assignment->assignment_status !== 'active') return response()->json(['message' => 'This assignment is no longer active.'], 409);
-            if ($assignment->vehicle_id && DB::table('parking_transactions')->where('vehicle_id', $assignment->vehicle_id)->where('transaction_status', 'active')->exists()) {
+            if ($assignment->vehicle_id && DB::table('parking_transactions')->where('vehicle_id', $assignment->vehicle_id)->where('transaction_status', 'active')->lockForUpdate()->first()) {
                 return response()->json(['message' => 'Record the vehicle exit before revoking its RFID.'], 409);
             }
             DB::table('rfid_assignments')->where('assignment_id', $id)->update(['assignment_status' => 'revoked', 'unassigned_at' => now(), 'updated_at' => now()]);
             DB::table('rfid_tags')->where('rfid_id', $assignment->rfid_id)->update(['tag_status' => 'deactivated', 'updated_at' => now()]);
             $this->audit($request, $id, 'rfid_revoked');
             return response()->json(['message' => 'RFID revoked. Future entry scans will be denied.']);
-        });
+        }, 3);
     }
 
     private function audit(Request $request, int $id, string $action): void

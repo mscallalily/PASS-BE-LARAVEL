@@ -35,11 +35,17 @@ class UserManagementController extends Controller
             ], 403);
         }
 
+        $filters = $request->validate(['role' => ['nullable', 'in:admin,parking_staff,student,faculty,employee,guest'], 'page' => ['nullable', 'integer', 'min:1'], 'search' => ['nullable', 'string', 'max:100']]);
         $query = User::with([
             'profile.department',
             'roles',
         ]);
 
+        if ($role = $filters['role'] ?? null) {
+            $codes = match ($role) { 'admin' => ['admin', 'parking_admin'], 'parking_staff' => ['security', 'parking_staff'], default => [$role] };
+            $type = $role === 'parking_staff' ? 'security' : $role;
+            $query->where(fn ($q) => $q->where('user_type', $type)->orWhereHas('roles', fn ($r) => $r->whereIn('role_code', $codes)));
+        }
         // Optional status filter.
         $status = $request->query('status');
 
@@ -85,6 +91,8 @@ class UserManagementController extends Controller
                 'userType' => $user->user_type,
                 'dept' => $profile?->registration_unit ?: $profile?->department?->department_name,
                 'registrationCategory' => $profile?->registration_category,
+                'yearLevel' => $profile?->year_level,
+                'section' => $profile?->section,
                 'schoolIdCheck' => $profile?->school_id_check_result,
                 'schoolIdSubmitted' => (bool) $profile?->school_id_document_path,
                 'contact' => $profile?->contact_number,
@@ -113,73 +121,26 @@ class UserManagementController extends Controller
      */
     public function approve(Request $request, string $id): JsonResponse
     {
-        $actor = $request->user();
-
-        if (! $actor || ! $this->canManageUsers($actor)) {
-            return response()->json([
-                'message' => 'You are not authorized to approve accounts.',
-            ], 403);
-        }
-
-        $user = User::where('user_id', $id)->firstOrFail();
-
-        if ($user->account_status !== 'pending') {
-            return response()->json([
-                'message' => 'Only pending accounts can be approved.',
-            ], 409);
-        }
-
-        \Illuminate\Support\Facades\DB::transaction(function () use ($user, $request, $actor) {
-            $before = ['account_status' => $user->account_status];
-            $user->account_status = 'active';
-            $user->save();
-            \App\Support\ActivityAudit::record($request, $actor, 'account_approved', 'users', (int) $user->user_id, $before, ['account_status' => $user->account_status]);
-        });
-
-        return response()->json([
-            'message' => 'User account approved successfully.',
-            'user' => [
-                'id' => (string) $user->user_id,
-                'status' => $user->account_status,
-            ],
-        ]);
+        return $this->decidePending($request, $id, 'approved');
     }
 
-    /**
-     * Reject a pending account using the existing deactivated status.
-     */
     public function reject(Request $request, string $id): JsonResponse
     {
+        return $this->decidePending($request, $id, 'rejected');
+    }
+
+    private function decidePending(Request $request, string $id, string $decision): JsonResponse
+    {
         $actor = $request->user();
-
-        if (! $actor || ! $this->canManageUsers($actor)) {
-            return response()->json([
-                'message' => 'You are not authorized to reject accounts.',
-            ], 403);
-        }
-
-        $user = User::where('user_id', $id)->firstOrFail();
-
-        if ($user->account_status !== 'pending') {
-            return response()->json([
-                'message' => 'Only pending accounts can be rejected.',
-            ], 409);
-        }
-
-        // The database enum has no "rejected" value.
-        \Illuminate\Support\Facades\DB::transaction(function () use ($user, $request, $actor) {
+        if (!$actor || !$this->canManageUsers($actor)) return response()->json(['message' => 'You are not authorized to manage users.'], 403);
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($actor, $request, $id, $decision) {
+            $user = User::where('user_id', $id)->lockForUpdate()->firstOrFail();
+            if ($user->account_status !== 'pending') return response()->json(['message' => 'Only pending accounts can be '.$decision.'.'], 409);
             $before = ['account_status' => $user->account_status];
-            $user->account_status = 'deactivated';
+            $user->account_status = $decision === 'approved' ? 'active' : 'deactivated';
             $user->save();
-            \App\Support\ActivityAudit::record($request, $actor, 'account_rejected', 'users', (int) $user->user_id, $before, ['account_status' => $user->account_status]);
-        });
-
-        return response()->json([
-            'message' => 'Account rejected and deactivated.',
-            'user' => [
-                'id' => (string) $user->user_id,
-                'status' => $user->account_status,
-            ],
-        ]);
+            \App\Support\ActivityAudit::record($request, $actor, 'account_'.$decision, 'users', (int) $user->user_id, $before, ['account_status' => $user->account_status]);
+            return response()->json(['message' => $decision === 'approved' ? 'User account approved successfully.' : 'Account rejected and deactivated.', 'user' => ['id' => (string) $user->user_id, 'status' => $user->account_status]]);
+        }, 3);
     }
 }

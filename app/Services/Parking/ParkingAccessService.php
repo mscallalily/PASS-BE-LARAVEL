@@ -74,7 +74,10 @@ class ParkingAccessService
             $this->afterCommit = [];
 
             try {
-                $result = DB::transaction(fn () => $this->enterLocked($id, $actor, $context, $at));
+                $result = DB::transaction(function () use ($id, $credential, $actor, $context, $at) {
+                    $this->afterCommit = [];
+                    return $this->enterLocked($id, $actor, $context, $at, $credential);
+                }, 3);
                 break;
             } catch (UniqueConstraintViolationException $e) {
                 if ($attempt >= 3) {
@@ -88,7 +91,7 @@ class ParkingAccessService
         return $result;
     }
 
-    private function enterLocked(array $id, ?User $actor, array $context, CarbonImmutable $at): array
+    private function enterLocked(array $id, ?User $actor, array $context, CarbonImmutable $at, array $credential): array
     {
         $vehicle = $id['vehicle'];
         $areaId = $vehicle->area_id;
@@ -103,8 +106,24 @@ class ParkingAccessService
             DB::table('users')->where('user_id', $ownerUserId)->lockForUpdate()->first();
         }
 
+        DB::table('vehicles')->where('vehicle_id', $vehicle->vehicle_id)->lockForUpdate()->first();
+
         // Serialize slot allocation within the selected area.
         $area = DB::table('parking_areas')->where('parking_area_id', $areaId)->lockForUpdate()->first();
+
+        // First plain read only after owner, vehicle AND area locks: avoids an
+        // old REPEATABLE READ snapshot while waiting for another allocator.
+        $fresh = $this->identify($credential);
+        $problem = $fresh['error'] ?? $this->credentialProblem($fresh);
+        if ($problem || !$fresh['vehicle'] || (int) $fresh['vehicle']->vehicle_id !== (int) $vehicle->vehicle_id
+            || (int) $fresh['vehicle']->area_id !== (int) $areaId
+            || (int) $fresh['vehicle']->owner_user_id !== (int) $vehicle->owner_user_id
+            || (int) $fresh['vehicle']->owner_visitor_id !== (int) $vehicle->owner_visitor_id) {
+            return $this->deny($fresh, $problem ?? 'Credential or vehicle changed. Scan again.', 'in', $actor, $context, $at);
+        }
+        $id = $fresh; $vehicle = $fresh['vehicle'];
+        if (!$area || !$area->is_active) return $this->deny($id, 'The parking area is unavailable.', 'in', $actor, $context, $at);
+
 
         $active = DB::table('parking_transactions')
             ->where('vehicle_id', $vehicle->vehicle_id)
@@ -204,11 +223,19 @@ class ParkingAccessService
 
         $this->afterCommit = [];
 
-        $result = DB::transaction(function () use ($credential, $actor, $context, $at) {
+        $reference = $this->identify($credential);
+        $result = DB::transaction(function () use ($reference, $credential, $actor, $context, $at) {
+            $this->afterCommit = [];
+            if ($vehicle = $reference['vehicle']) {
+                $visitor = $vehicle->owner_visitor_id ? DB::table('visitors')->where('visitor_id', $vehicle->owner_visitor_id)->lockForUpdate()->first() : null;
+                $owner = $vehicle->owner_user_id ?: ($visitor->user_id ?? null);
+                if ($owner) DB::table('users')->where('user_id', $owner)->lockForUpdate()->first();
+                DB::table('vehicles')->where('vehicle_id', $vehicle->vehicle_id)->lockForUpdate()->first();
+            }
             $id = $this->identify($credential);
 
             if (!$id['vehicle']) {
-                return ['status' => 'not_found', 'message' => $id['error'] ?? 'Vehicle not identified.'];
+                return ['status' => 'not_found'] + $this->deny($id, $id['error'] ?? 'Vehicle not identified.', 'out', $actor, $context, $at);
             }
 
             // Staff can still record the exit by plate number (override).
@@ -264,7 +291,7 @@ class ParkingAccessService
                 'duration_minutes' => $minutes,
                 'staff_override' => $id['method'] === 'manual',
             ] + $this->slotInfo($transaction->slot_id);
-        });
+        }, 3);
 
         $this->flushAfterCommit();
 
@@ -501,9 +528,9 @@ class ParkingAccessService
         }
 
         if ($vehicle->owner_user_id) {
-            $owner = DB::table('users')->where('user_id', $vehicle->owner_user_id)->first(['account_status', 'deleted_at']);
+            $owner = DB::table('users')->where('user_id', $vehicle->owner_user_id)->first(['account_status', 'deleted_at', 'email_verified_at']);
 
-            if (!$owner || $owner->deleted_at !== null || $owner->account_status !== 'active') {
+            if (!$owner || $owner->deleted_at !== null || $owner->account_status !== 'active' || !$owner->email_verified_at) {
                 return "Owner account is " . ($owner->account_status ?? 'missing') . '.';
             }
 
