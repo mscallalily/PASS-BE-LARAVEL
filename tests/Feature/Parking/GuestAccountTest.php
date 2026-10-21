@@ -53,7 +53,7 @@ class GuestAccountTest extends ParkingTestCase
     private function guestVehicle(): int
     {
         return $this->postJson('/api/guest/vehicles', [
-            'plate_number' => 'gst ' . random_int(1000, 9999),
+            'plate_number' => strtolower($this->nextTestPlate('GST')),
             'vehicle_type_id' => DB::table('vehicle_types')->where('type_code', 'sedan')->value('vehicle_type_id'),
         ])->assertCreated()->json('vehicle_id');
     }

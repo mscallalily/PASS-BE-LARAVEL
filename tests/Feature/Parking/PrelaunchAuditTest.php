@@ -32,17 +32,22 @@ class PrelaunchAuditTest extends ParkingTestCase
         });
     }
 
-    public function test_admin_can_create_only_parking_staff_from_add_user(): void
+    public function test_legacy_add_user_route_uses_invitation_and_requires_activation(): void
     {
+        Notification::fake();
+        config(['app.frontend_url' => 'http://localhost:8444']);
         $this->admin();
         $this->postJson('/api/admin/users', [
-            'full_name' => 'Audit Parking Staff', 'email' => 'audit-staff@example.test', 'user_code' => 'SEC-AUDIT-001',
-            'password' => 'AuditPassword2026!', 'password_confirmation' => 'AuditPassword2026!', 'contact_number' => '09170000000', 'role' => 'admin',
-        ])->assertCreated();
+            'first_name' => 'AUDIT PARKING', 'last_name' => 'STAFF',
+            'email' => 'audit-staff@example.test', 'user_code' => 'SEC-AUDIT-001',
+            'contact_number' => '09170000000', 'role' => 'parking_staff',
+        ])->assertCreated()->assertJsonPath('accountSetup.required', true);
         $created = User::where('email', 'audit-staff@example.test')->firstOrFail();
         $this->assertSame('security', $created->user_type);
+        $this->assertNull($created->email_verified_at);
         $this->assertFalse($created->isAdmin());
         $this->assertTrue($created->roles()->where('role_code', 'security')->exists());
+        $this->assertDatabaseHas('privileged_account_invitations', ['user_id' => $created->user_id, 'completed_at' => null]);
     }
 
     public function test_profile_contact_is_persisted_and_identity_cannot_be_changed(): void

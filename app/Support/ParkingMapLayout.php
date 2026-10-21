@@ -41,7 +41,7 @@ class ParkingMapLayout
     private static function carProposal(): array
     {
         return [
-            ['x' => 1.980000000, 'y' => 0.000000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 4.5, 'row' => 'North perimeter', 'type' => 'perpendicular'],
+            ['x' => 3.600000000, 'y' => 0.000000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 4.5, 'row' => 'North perimeter', 'type' => 'perpendicular'],
             ['x' => 8.600000000, 'y' => 0.000000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 4.5, 'row' => 'North perimeter', 'type' => 'perpendicular'],
             ['x' => 11.100000000, 'y' => 0.000000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 4.5, 'row' => 'North perimeter', 'type' => 'perpendicular'],
             ['x' => 13.600000000, 'y' => 0.000000000, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'aisle' => 4.5, 'row' => 'North perimeter', 'type' => 'perpendicular'],
@@ -117,24 +117,16 @@ class ParkingMapLayout
             }
         }
         if ($measured) {
-            $add('CAR', 42, 4.5, 0, 2.5, 5.0, 'North perimeter');
-            $codes = array_merge(range(1, 41), range(43, 55));
-            foreach (self::carProposal() as $i => $bay) {
-                $add('CAR', $codes[$i], $bay['x'], $bay['y'], $bay['width'], $bay['depth'], $bay['row'], false, $bay['angle']);
+            $rows = self::carProposal();
+            // Keep C-01 and C-02 directly beside C-03 at the same 2.50 m bay pitch.
+            array_splice($rows, 1, 0, [['x' => 6.1, 'y' => 0, 'angle' => 0, 'width' => 2.5, 'depth' => 5, 'row' => 'North perimeter']]);
+            foreach ($rows as $i => $bay) {
+                $add('CAR', $i + 1, $bay['x'], $bay['y'], $bay['width'], $bay['depth'], $bay['row'], false, $bay['angle']);
             }
         } else {
-            // All 55 existing car codes have separate diagram symbols. These are
-            // deliberately NOT metre-sized bays; physical fit remains a separate view.
-            $add('CAR', 42, 7.5, 0, 2.8, 3.6, 'Diagram north row');
-            foreach (range(1, 18) as $i) {
-                $add('CAR', $i, 10.5 + ($i - 1) * 2, 0, 1.8, 3.6, 'Diagram north row');
-            }
-            foreach (range(19, 37) as $i) {
-                $add('CAR', $i, 10.5 + ($i - 19) * 2, 6.6, 1.8, 3.6, 'Diagram middle row');
-            }
-            foreach (array_merge(range(38, 41), range(43, 55)) as $column => $i) {
-                $add('CAR', $i, 13 + $column * 2, 13.2, 1.8, 3.6, 'Diagram south row');
-            }
+            foreach (range(1, 19) as $i) $add('CAR', $i, 7.5 + ($i - 1) * 2, 0, 1.8, 3.6, 'Diagram north row');
+            foreach (range(20, 38) as $i) $add('CAR', $i, 10.5 + ($i - 20) * 2, 6.6, 1.8, 3.6, 'Diagram middle row');
+            foreach (range(39, 55) as $i) $add('CAR', $i, 13 + ($i - 39) * 2, 13.2, 1.8, 3.6, 'Diagram south row');
         }
 
         return $bays;
@@ -160,7 +152,7 @@ class ParkingMapLayout
         }
         $clearances[] = ['polygon' => self::rectangle('MC', 28.4, 0, 2.56, 8.8), 'kind' => 'motorcycle_end_aisle', 'width_m' => 2.56];
         if ($measured) {
-            $clearances[] = ['polygon' => self::carRectangle([4.5, 5], 2.5, 4.5), 'kind' => 'car_aisle', 'width_m' => 4.5];
+            $clearances[] = ['polygon' => self::carRectangle([6.1, 5], 2.5, 4.5), 'kind' => 'car_aisle', 'width_m' => 4.5];
             foreach (self::carProposal() as $bay) {
                 $angle = deg2rad($bay['angle']);
                 $front = [$bay['x'] - $bay['depth'] * sin($angle), $bay['y'] + $bay['depth'] * cos($angle)];
@@ -247,7 +239,7 @@ class ParkingMapLayout
             'car_edges_m' => self::CAR_EDGES,
             'note' => $measured ? 'Proposed layout at one scale: 8 drawing units = 1 metre. Motorcycle dimensions are owner-reported. Car edges 1–6 follow the owner-numbered sketch. The shared motorcycle end is included; the short NW return and all bearings are estimated, not surveyed. Earlier cumulative map-ruler labels have been removed.' : 'Complete slot map: C-01–C-55 and M-01–M-84. Car bay symbols and aisles are schematic, not to scale. Their diagram positions do not establish physical fit. Use Parking layout for full-size bays and owner-reported boundaries.',
             'motorcycle_proposal' => '84 compact bays: 3 rows × 28, each 1.00 × 2.00 m. Two 1.20 m internal aisles, a 2.56 m connecting end aisle, 0.40 m end margin and 0.20 m side margins. Narrow aisles are a walk/push proposal for compact motorcycles and scooters; actual vehicle sizes and manoeuvring must be checked.',
-            'car_proposal' => $measured ? '45 full-size independent proposed bays: 18 north-perimeter regular bays including C-42, 15 in interior row A, eight in interior row B and four in the south row. All 45 car bays are regular 2.50 × 5.00 m bays. C-42 has no PWD designation; this prototype has no accessibility eligibility workflow. Internal access frontages are 4.50 m, a tight concept allowance requiring actual turning checks, not a certified standard aisle. No tandem bays are used. This is not a maximum-capacity or vehicle swept-path certification. All 55 car records remain; ten codes have no measured position. The 45-position count is conditional on the reconstructed outline and site validation.' : 'All 55 existing car slots remain as schematic inventory symbols. Diagram sizes are not physical dimensions. Parking layout shows 45 full-size proposed bays on the corrected numbered outline; physical capacity remains subject to site confirmation.',
+            'car_proposal' => $measured ? '45 full-size independent proposed bays: 18 north-perimeter regular bays numbered C-01–C-18, 15 in interior row A, eight in interior row B and four in the south row. All 45 car bays are regular 2.50 × 5.00 m bays. The prototype has no PWD designation or accessibility eligibility workflow. Internal access frontages are 4.50 m, a tight concept allowance requiring actual turning checks, not a certified standard aisle. No tandem bays are used. This is not a maximum-capacity or vehicle swept-path certification. All 55 car records remain; C-46–C-55 have no measured position. The 45-position count is conditional on the reconstructed outline and site validation.' : 'All 55 existing car slots remain as schematic inventory symbols. Diagram sizes are not physical dimensions. Parking layout shows 45 full-size proposed bays on the corrected numbered outline; physical capacity remains subject to site confirmation.',
             'vehicle_measurements' => ['car_width_m' => 2.0447, 'car_length_m' => 4.7752, 'car_mirrors_included' => false, 'motorcycle_width_m' => 0.5969, 'motorcycle_length_m' => 1.905, 'note' => 'Owner-measured maximum dimensions. Car width is body-only; mirrors, wheelbase, steering lock and turning envelope are not measured. These figures do not replace bay dimensions.'],
             'circulation_note' => $measured ? 'Opposing rows share 4.50 m internal aisles. The western passage connects the lower aisle. Every frontage connects geometrically to the shared approach through a nominal 3.06 m clear-envelope grid. Connectivity is not a steering or swept-path test. The 4.50 m aisle choice, mirrors, wheelbase, turning lock, end manoeuvres, accessibility and the estimated NW boundary require campus validation before marking bays.' : 'This optional inventory diagram uses schematic symbols. It does not represent physical aisle widths or a validated vehicle turning path.',
             'inventory' => ['motorcycle_configured' => 84, 'motorcycle_drawn' => 84, 'car_configured' => 55, 'car_drawn' => $measured ? 45 : 55],

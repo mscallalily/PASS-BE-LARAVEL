@@ -8,6 +8,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class AccountProfileController extends Controller
@@ -20,26 +21,34 @@ class AccountProfileController extends Controller
             'name' => implode(' ', array_filter([$p?->first_name, $p?->middle_name, $p?->last_name, $p?->suffix])),
             'email' => $user->email, 'id_number' => $user->user_code,
             'department' => $p?->registration_unit ?: $p?->department?->department_name,
+            'registration_category' => $p?->registration_category,
+            'year_level' => $p?->year_level, 'section' => $p?->section,
             'contact_number' => $p?->contact_number ?? '', 'account_status' => $user->account_status,
         ]]);
     }
 
     public function update(Request $request): JsonResponse
     {
+        $isShs = $request->user()->profile?->registration_category === 'shs';
+        $academicPosted = $isShs && (array_key_exists('year_level', $request->all()) || array_key_exists('section', $request->all()));
+        if (is_string($request->input('section'))) $request->merge(['section' => mb_strtoupper(preg_replace('/\s+/u', ' ', trim($request->input('section'))))]);
         $data = $request->validate([
             'contact_number' => ['required', 'string', 'regex:/^(?:09\d{9}|\+639\d{9})$/'],
-            ...array_fill_keys(['name', 'first_name', 'last_name', 'email', 'user_code', 'department_id', 'role', 'user_type', 'account_status'], ['prohibited']),
+            'year_level' => [Rule::requiredIf($academicPosted), Rule::prohibitedIf(! $isShs), 'nullable', Rule::in(['11', '12'])],
+            'section' => [Rule::requiredIf($academicPosted), Rule::prohibitedIf(! $isShs), 'nullable', 'string', 'max:60', 'not_regex:/[<>\x00-\x1F\x7F]/'],
+            ...array_fill_keys(['name', 'first_name', 'last_name', 'email', 'user_code', 'department_id', 'role', 'user_type', 'account_status', 'registration_category', 'school_id_check_status', 'school_id_check_result'], ['prohibited']),
         ]);
+        if (! $isShs) unset($data['year_level'], $data['section']);
         DB::transaction(function () use ($request, $data) {
             $user = $request->user();
             DB::table('users')->where('user_id', $user->user_id)->lockForUpdate()->first();
             $profile = $user->profile()->firstOrFail();
-            $before = ['contact_number' => $profile->contact_number];
+            $before = $profile->only(array_keys($data));
             $profile->update($data);
             DB::table('visitors')->where('user_id', $user->user_id)->update(['contact_number' => $data['contact_number'], 'updated_at' => now()]);
-            ActivityAudit::record($request, $user, 'profile_contact_updated', 'users', $user->user_id, $before, $data);
+            ActivityAudit::record($request, $user, array_key_exists('section', $data) ? 'profile_details_updated' : 'profile_contact_updated', 'users', $user->user_id, $before, $data);
         });
-        return response()->json(['message' => 'Contact number saved.']);
+        return response()->json(['message' => array_key_exists('section', $data) ? 'Contact and school details saved.' : 'Contact number saved.']);
     }
 
     public function password(Request $request): JsonResponse

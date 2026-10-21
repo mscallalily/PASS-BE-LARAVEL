@@ -10,6 +10,7 @@ class AccountAccess
 {
     public function handle(Request $request, Closure $next): Response
     {
+        if ($response = app(\App\Services\Auth\PrivilegedAccounts::class)->guard($request)) return $response;
         // A pending account may only inspect its own application and sign out.
         if ($request->is('api/me', 'api/logout')) return $next($request);
         $user = $request->user();

@@ -21,6 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->redirectGuestsTo('/login');
         $middleware->prependToGroup('api', \App\Http\Middleware\NormalizeIdentityInput::class);
+        $middleware->appendToGroup('api', \App\Http\Middleware\RecordHistoryContext::class);
         $middleware->appendToGroup('api', \App\Http\Middleware\PrivateApiResponses::class);
     })
     ->withExceptions(function (Exceptions $exceptions) {

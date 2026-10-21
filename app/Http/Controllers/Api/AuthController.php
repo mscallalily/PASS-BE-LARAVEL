@@ -23,6 +23,7 @@ class AuthController extends Controller
         $category = $request->input('registration_category');
         $userType = $category === 'employee' ? 'employee' : 'student';
         $request->merge(['email' => strtolower(trim((string) $request->input('email')))]);
+        if (is_string($request->input('section'))) $request->merge(['section' => mb_strtoupper(preg_replace('/\s+/u', ' ', trim($request->input('section'))))]);
         $data = $request->validate([
             'registration_category' => ['required', Rule::in(\App\Services\Registration\InstitutionalIdRules::CATEGORIES)],
             'first_name' => ['required', 'string', 'max:100', "regex:/^[\\pL\\pM][\\pL\\pM .'-]*$/u"],
@@ -37,9 +38,11 @@ class AuthController extends Controller
             'password' => ['bail', 'string', new \App\Rules\PasswordBytes, 'required', 'string', 'min:8', 'confirmed'],
             'user_type' => ['sometimes', Rule::in([$userType])],
             'department' => ['required', 'string', 'max:150'],
+            'year_level' => [Rule::requiredIf($category === 'shs'), Rule::prohibitedIf($category !== 'shs'), 'nullable', Rule::in(['11', '12'])],
+            'section' => [Rule::requiredIf($category === 'shs'), Rule::prohibitedIf($category !== 'shs'), 'nullable', 'string', 'max:60', 'not_regex:/[<>\x00-\x1F\x7F]/'],
             'contact_number' => ['required', 'string', 'max:30'],
             'school_id_file' => ['required', 'file', 'mimes:jpg,jpeg,png,pdf', 'mimetypes:image/jpeg,image/png,application/pdf', 'max:5120'],
-            'id_check_receipt' => [Rule::requiredIf($category !== 'shs'), 'nullable', 'string', 'max:30000'],
+            'id_check_receipt' => ['required', 'string', 'max:30000'],
             'agree' => ['required', 'accepted'],
             'request_manual_review' => ['sometimes', 'boolean'],
             // Vehicle enrollment belongs to the signed-in vehicle workflow.
@@ -62,7 +65,7 @@ class AuthController extends Controller
         $file = $request->file('school_id_file');
         $size = @getimagesize($file->getRealPath());
         if ($size && $size[0]*$size[1] > 20000000) throw \Illuminate\Validation\ValidationException::withMessages(['school_id_file' => 'Use a photo with at most 20 megapixels.']);
-        $evidence = $category === 'shs' ? [] : app(\App\Services\Registration\InstitutionalIdReceipt::class)->read($data['id_check_receipt'], $file, $category);
+        $evidence = app(\App\Services\Registration\InstitutionalIdReceipt::class)->read($data['id_check_receipt'], $file, $category);
         $rules = app(\App\Services\Registration\InstitutionalIdRules::class);
         $check = $rules->requestManualReview($rules->evaluate($category, $evidence, $data), $request->boolean('request_manual_review'));
         if ($check['status'] === 'needs_correction') {
@@ -81,6 +84,8 @@ class AuthController extends Controller
                     'first_name' => mb_strtoupper(trim($data['first_name'])), 'last_name' => mb_strtoupper(trim($data['last_name'])),
                     'middle_name' => empty($data['middle_initial']) ? null : mb_strtoupper(rtrim($data['middle_initial'], '.')).'.',
                     'suffix' => mb_strtoupper(\App\Services\Registration\InstitutionalIdRules::suffix($data['suffix'] ?? '')) ?: null,
+                    'year_level' => $data['registration_category'] === 'shs' ? (string) $data['year_level'] : null,
+                    'section' => $data['registration_category'] === 'shs' ? $data['section'] : null,
                     'contact_number' => trim($data['contact_number']), 'school_id_document_path' => $path,
                     'school_id_check_status' => $check['status'], 'school_id_check_result' => $check,
                 ]);
@@ -103,7 +108,7 @@ class AuthController extends Controller
         try { app(\App\Services\Auth\EmailVerificationCodes::class)->send($user); $sent = true; }
         catch (Throwable $error) { report($error); }
         return response()->json([
-            'message' => $sent ? 'Registration saved. Verify your email next. Matching IDs activate automatically; uncertain checks require staff review.' : 'Registration saved, but the verification email could not be sent. Use Send / resend code to try again.',
+            'message' => $sent ? ($category === 'shs' ? 'SHS registration saved. Verify your email next; PASS staff must approve your account.' : 'Registration saved. Verify your email next. Matching IDs activate automatically; uncertain checks require staff review.') : 'Registration saved, but the verification email could not be sent. Use Send / resend code to try again.',
             'email_verification_sent' => $sent, 'id_check' => \App\Services\Registration\PublicIdCheck::summary($check), 'user' => $this->userPayload($user),
         ], 201);
     }
@@ -118,7 +123,7 @@ class AuthController extends Controller
         $identifier = trim($data['identifier']);
         $user = User::where('email', $identifier)->orWhere('user_code', $identifier)->first();
         $numericId = \App\Services\Registration\InstitutionalIdRules::digits($identifier);
-        if (!$user && preg_match('/^(?:\d{7}|\d{9})$/D', $numericId)) {
+        if (!$user && preg_match('/^(?:\d{7}|\d{9}|\d{12})$/D', $numericId)) {
             // Both printed and digits-only institutional numbers may sign in.
             // Legacy ambiguous normalized IDs require the exact saved ID or email.
             $matches = User::whereRaw("REPLACE(REPLACE(user_code, '-', ''), ' ', '') = ?", [$numericId])->limit(2)->get();
@@ -141,6 +146,9 @@ class AuthController extends Controller
                 'message' => 'Invalid email/ID number or password.',
             ], 401);
         }
+
+        // PASS_PRIVILEGED_ACCOUNT_SETUP: restricted first-login session.
+        if ($setup = app(\App\Services\Auth\PrivilegedAccounts::class)->setupLogin($request, $user)) return $setup;
 
         if (($user->isGuest() || in_array($user->user_type, ['student', 'faculty', 'employee', 'other'], true)) && !$user->hasVerifiedEmail()) {
             $this->logAttempt($request, $user, $data['identifier'], false, 'email_unverified');
@@ -230,9 +238,12 @@ class AuthController extends Controller
             'idNum' => $user->user_code,
             'dept' => $profile?->registration_unit ?: $profile?->department?->department_name,
             'registrationCategory' => $profile?->registration_category,
+            'yearLevel' => $profile?->year_level,
+            'section' => $profile?->section,
             'schoolIdCheckStatus' => $profile?->school_id_check_status,
             'accountStatus' => $user->account_status,
             'emailVerified' => $user->hasVerifiedEmail(),
+            'accountSetup' => app(\App\Services\Auth\PrivilegedAccounts::class)->state($user),
             'schoolIdSubmitted' => !empty($profile?->school_id_document_path),
         ];
     }

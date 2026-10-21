@@ -12,7 +12,7 @@ class PrelaunchPermissionTest extends ParkingTestCase
         $count = 0;
         foreach (Route::getRoutes() as $route) {
             if (!str_starts_with($route->uri(), 'api/') || !in_array('auth:sanctum', $route->gatherMiddleware(), true)) continue;
-            $uri = '/'.preg_replace('/\{[^}]+\}/', '1', str_replace('{kind}', 'license', $route->uri()));
+            $uri = '/'.preg_replace('/\{[^}]+\}/', '1', str_replace(['{kind}', '{entity}', '{action}', '{key}'], ['license', 'users', 'archive', str_repeat('a', 64)], $route->uri()));
             $method = $route->methods()[0];
             $response = $this->json($method, $uri);
             $this->assertSame(401, $response->status(), $method.' '.$uri);

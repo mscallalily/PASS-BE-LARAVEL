@@ -40,7 +40,7 @@ class RegistrationIdController extends Controller
             $receipt = $data['id_check_receipt'];
         } else {
             try {
-                $evidence = $category === 'shs' ? ['kind' => 'image', 'engine_available' => false, 'fields' => []] : $reader->read($file->getRealPath(), $file->getMimeType(), $category);
+                $evidence = $reader->read($file->getRealPath(), $file->getMimeType(), $category);
             } catch (\Throwable $error) {
                 report($error);
                 $evidence = ['kind' => 'image', 'engine_available' => false, 'fields' => []];

@@ -15,6 +15,8 @@ return [
     |
     */
 
+    'deployment' => ['volume_mount_path' => env('RAILWAY_VOLUME_MOUNT_PATH')],
+
     'simulator' => [
         'enabled' => (bool) env('PASS_SIMULATOR_ENABLED', false),
         'testers' => array_values(array_filter(array_map('trim', explode(',', (string) env('PASS_SIMULATOR_TESTERS', ''))))),

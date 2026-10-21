@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-20",
+  "scope": "Exact supplied Laravel/React working-source exports; local software verification only",
+  "inputs": {
+    "PASS-current-frontend-source-20261020-121733-e72581.zip": "0df2b2571b326a8f9d456902a82cd43782740c97187646ef486918cf96b146bf",
+    "PASS-current-backend-source-20261020-121733-e72581.zip": "6348bc73c8e427be0d30abef4bc177759da99c702a02de94d4577f49cccf51b7"
+  },
+  "backend": {
+    "tests": 235,
+    "assertions": 53628,
+    "productionCheckAfterFinalRefinement": {
+      "tests": 5,
+      "assertions": 64
+    }
+  },
+  "frontend": {
+    "strictTypeScript": "pass",
+    "productionBuild": "pass",
+    "httpFailureTests": 10,
+    "nativeViteConfigWarnings": "removed",
+    "largeOptional3dWorkerWarning": "remains"
+  },
+  "browser": {
+    "main": {
+      "checks": 703,
+      "pageErrors": 0,
+      "api5xx": 0,
+      "widths": [
+        320,
+        390,
+        768,
+        1440
+      ],
+      "routeLayouts": 208,
+      "syntheticFixtures": true
+    },
+    "focused": {
+      "checks": 41,
+      "pageErrors": 0,
+      "widths": [
+        320,
+        390,
+        768,
+        1440
+      ],
+      "positiveTagPersistence": true,
+      "lazy3dVerified": true,
+      "webglFallbackOnly": true,
+      "syntheticFixtures": true
+    },
+    "totalAssertions": 744,
+    "realDevices": "not certified",
+    "webgl": "headless environment used the existing SVG fallback; hardware-accelerated 3D rendering remains a device acceptance check",
+    "mobileViewportFollowUp": "SVG height reduced on small screens; focused 41 checks rerun on the final CSS change."
+  },
+  "concurrency": {
+    "independentOperations": 66,
+    "scenarios": 9,
+    "expectedSingleWinnerInvariants": "pass",
+    "httpThroughputCertification": false
+  },
+  "deploymentBoot": {
+    "composerValidate": "pass",
+    "packageDiscovery": "pass",
+    "laravelOptimize": "pass",
+    "actualRailpackBuild": "not run",
+    "actualVercelBuild": "not run"
+  },
+  "productionSecretsRead": false,
+  "realEmailSent": false,
+  "deployed": false,
+  "pushed": false,
+  "launchStatus": "NOT CERTIFIED: see remaining gates in production-deployment.md"
+}

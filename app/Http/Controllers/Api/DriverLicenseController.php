@@ -163,10 +163,7 @@ class DriverLicenseController extends Controller
 
         [$license, $oldPath] = $outcome;
 
-        // The replaced document is no longer needed; keep personal data to a minimum.
-        if ($oldPath && $oldPath !== $path) {
-            Storage::disk('private')->delete($oldPath);
-        }
+        // Committed earlier documents remain private and accessible through protected history.
 
         $this->dispatchCheck($license->license_id, $runId);
 

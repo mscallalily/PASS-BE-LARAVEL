@@ -191,7 +191,7 @@ class VehicleRegistrationController extends Controller
             Storage::disk('private')->delete($path);
             throw $exception;
         }
-        if ($oldPath) Storage::disk('private')->delete($oldPath);
+        // Retain the committed previous photo for protected record history.
         return response()->json(['message' => 'Vehicle photo saved. Authorization is pending review.']);
     }
 

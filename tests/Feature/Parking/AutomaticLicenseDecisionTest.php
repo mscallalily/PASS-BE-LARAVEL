@@ -186,6 +186,6 @@ class AutomaticLicenseDecisionTest extends ParkingTestCase
             'license_file' => UploadedFile::fake()->image('resubmit.png', 1700, 1071),
         ], ['Accept' => 'application/json'])->assertCreated()->assertJsonPath('data.verification_status', 'verified')->assertJsonPath('data.verification_source', 'automatic');
         $this->assertNull($license->fresh()->reviewed_by);
-        Storage::disk('private')->assertMissing($oldPath);
+        Storage::disk('private')->assertExists($oldPath);
     }
 }

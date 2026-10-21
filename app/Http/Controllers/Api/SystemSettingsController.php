@@ -73,11 +73,4 @@ class SystemSettingsController extends Controller
             'message' => 'General settings saved successfully.',
         ]);
     }
-    // The staging route existed without an implementation. Keep the contract
-    // explicit until authenticated logo upload is developed and reviewed.
-    public function uploadLogo(Request $request): JsonResponse
-    {
-        abort_unless($request->user()?->isAdmin(), 403);
-        return response()->json(['message' => 'Logo upload is not implemented yet.'], 501);
-    }
 }

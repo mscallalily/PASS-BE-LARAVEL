@@ -65,7 +65,7 @@ Route::post('/reset-password', [AuthController::class, 'resetPassword'])
     ->middleware('throttle:5,1,api-action-8:');
 
 // Authenticated routes
-Route::middleware(['auth:sanctum', \App\Http\Middleware\AccountAccess::class])->group(function () {
+Route::middleware(['auth:sanctum', \App\Http\Middleware\RecordHistoryContext::class.':actor', \App\Http\Middleware\AccountAccess::class])->group(function () {
     Route::post('/vehicles/read-photo', \App\Http\Controllers\Api\VehiclePhotoReadController::class)->middleware('throttle:vehicle-photo-read');
     Route::get(
     '/vehicles/{id}/photo',
@@ -193,6 +193,14 @@ Route::post(
 
     // Admin user management
     Route::prefix('admin')->group(function () {
+        Route::get('/parking-layout/export', [\App\Http\Controllers\Api\ParkingLayoutExportController::class, 'show']);
+        Route::get('/record-history', [\App\Http\Controllers\Api\RecordHistoryController::class, 'index']);
+        Route::get('/record-history/{id}/documents/{field}', [\App\Http\Controllers\Api\RecordHistoryController::class, 'document'])->whereNumber('id');
+        Route::get('/record-archives/{entity}', [\App\Http\Controllers\Api\RecordArchiveController::class, 'index'])->whereIn('entity', ['users', 'vehicles']);
+        Route::post('/record-archives/{entity}/{id}/{action}', [\App\Http\Controllers\Api\RecordArchiveController::class, 'change'])->whereIn('entity', ['users', 'vehicles'])->whereNumber('id')->whereIn('action', ['archive', 'restore'])->middleware('throttle:20,1,record-archive');
+        Route::get('/audit-alerts', [\App\Http\Controllers\Api\AuditPriorityController::class, 'index']);
+        Route::post('/audit-alerts/{key}/review', [\App\Http\Controllers\Api\AuditPriorityController::class, 'review'])->where('key', '[a-f0-9]{64}')->middleware('throttle:20,1,audit-alert-review');
+
         Route::get('/reports', [\App\Http\Controllers\Api\AdminReportController::class, 'index']);
         Route::get('/reports/export', [\App\Http\Controllers\Api\AdminReportController::class, 'export'])->middleware('throttle:10,1,admin-report-export:');
         Route::get('/dashboard', [AdminDashboardController::class, 'index']);
@@ -200,13 +208,12 @@ Route::post(
         Route::get('/audit-logs', [AuditLogController::class, 'index']);
         Route::get('/system-settings', [SystemSettingsController::class, 'index']);
         Route::put('/system-settings', [SystemSettingsController::class, 'update']);
-        Route::post('/system-settings/logo', [SystemSettingsController::class, 'uploadLogo']);
         // Separate development slot simulation; not parking transaction occupancy.
         Route::get('/parking/slots', [ParkingSlotSimulationController::class, 'index']);
         Route::patch('/parking/slots', [ParkingSlotSimulationController::class, 'update']);
 
         Route::get('/users', [UserManagementController::class, 'index']);
-        Route::post('/users', [UserManagementController::class, 'store'])->middleware('throttle:10,1,staff-create:');
+        Route::post('/users', [\App\Http\Controllers\Api\PrivilegedAccountController::class, 'store'])->middleware('throttle:privileged-invite');
 
         Route::patch(
             '/users/{id}/approve',
@@ -219,3 +226,6 @@ Route::post(
         );
     });
 });
+
+// PASS_PRIVILEGED_ACCOUNT_SETUP
+require __DIR__.'/privileged_accounts.php';

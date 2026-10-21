@@ -44,7 +44,7 @@ class RegistrationIdTest extends ParkingTestCase
 
     private function payload(string $category = 'college', array $changes = []): array
     {
-        return $changes + ['registration_category' => $category, 'first_name' => 'Juan Miguel', 'last_name' => 'Dela Cruz', 'middle_initial' => 'S.',
+        return $changes + ($category === 'shs' ? ['year_level' => '12', 'section' => 'QA SECTION'] : []) + ['registration_category' => $category, 'first_name' => 'Juan Miguel', 'last_name' => 'Dela Cruz', 'middle_initial' => 'S.',
             'user_code' => $category === 'employee' ? '0221234' : '202401234', 'email' => 'registration-qa@example.test',
             'password' => 'Password2026!', 'password_confirmation' => 'Password2026!', 'department' => $this->department,
             'contact_number' => '09170000000', 'agree' => true, 'school_id_file' => UploadedFile::fake()->image('id.png', 1000, 1600)];
@@ -141,10 +141,12 @@ class RegistrationIdTest extends ParkingTestCase
         $this->assertSame([], Storage::disk('private')->allFiles());
     }
 
-    public function test_shs_and_reader_outage_allow_only_pending_staff_review_without_invented_shs_format(): void
+    public function test_shs_lrn_and_reader_outage_allow_only_pending_staff_review(): void
     {
-        $shs = $this->payload('shs', ['user_code' => 'SHS-24-001', 'department' => 'Senior High School', 'middle_initial' => '']);
-        $this->register($shs)->assertCreated()->assertJsonPath('id_check.status', 'manual_review')->assertJsonPath('user.accountStatus', 'pending')->assertJsonPath('user.role', 'student');
+        $shs = $this->payload('shs', ['user_code' => '000123456789', 'department' => 'Senior High School', 'middle_initial' => '']);
+        $evidence = $this->evidence(['shs_marker' => true, 'school_marker' => false]);
+        $evidence['fields']['user_code'] = $shs['user_code'];
+        $this->register($this->withReceipt($shs, $evidence))->assertCreated()->assertJsonPath('id_check.status', 'manual_review')->assertJsonPath('user.accountStatus', 'pending')->assertJsonPath('user.role', 'student');
         $outage = $this->withReceipt($this->payload(changes: ['email' => 'outage@example.test']), $this->evidence(['engine_available' => false]));
         $this->register($outage)->assertCreated()->assertJsonPath('id_check.status', 'unavailable')->assertJsonPath('user.accountStatus', 'pending');
     }
@@ -297,13 +299,13 @@ class RegistrationIdTest extends ParkingTestCase
             ['college',[], $this->evidence(['field_confidence'=>['first_name'=>55,'last_name'=>95,'user_code'=>95]])],
             ['college',['first_name'=>'Juan Manuel','request_manual_review'=>true],$this->evidence()],
             ['college',[],$this->evidence(['engine_available'=>false])],
-            ['shs',['user_code'=>'SHS-001','department'=>'Senior High School'],null],
+            ['shs',['user_code'=>'000123456789','department'=>'Senior High School'],$this->evidence(['shs_marker'=>true])],
         ];
         foreach($cases as $i=>[$category,$changes,$e]) {
             Cache::flush();
             $payload=$this->payload($category,$changes+['email'=>"review{$i}@example.test",'user_code'=>"20240123{$i}"]);
             if ($e) $e['fields']['user_code']=$payload['user_code'];
-            $r=$this->register($category==='shs'?$payload:$this->withReceipt($payload,$e))->assertCreated();
+            $r=$this->register($this->withReceipt($payload,$e))->assertCreated();
             $id=(int)$r->json('user.id');
             $this->verifyRegistration($id)->assertOk()->assertJsonPath('message','Email verified. Your ID needs staff review; your account remains pending.');
             $this->assertDatabaseHas('users',['user_id'=>$id,'account_status'=>'pending']);
@@ -384,13 +386,14 @@ class RegistrationIdTest extends ParkingTestCase
         $e=$this->evidence(['sharpness'=>40,'school_marker'=>false,'confidence'=>50,'field_confidence'=>['first_name'=>77.2,'last_name'=>95,'user_code'=>95]]);
         $data=$this->withReceipt($this->payload(),$e);
         $r=$this->post('/api/registration/id-check',$data,['Accept'=>'application/json'])->assertOk()->assertJsonPath('data.status','manual_review');
-        $this->assertEqualsCanonicalizing(['status','message','fields','receipt','current_year'], array_keys($r->json('data')));
+        $this->assertEqualsCanonicalizing(['status','message','identity_matched','fields','receipt','current_year'], array_keys($r->json('data')));
+        $this->assertIsBool($r->json('data.identity_matched'));
         $registered=$this->register($data)->assertCreated();
         $private=DB::table('user_profiles')->where('user_id',$registered->json('user.id'))->value('school_id_check_result');
         $private=json_decode($private,true);
         $this->assertStringContainsString('77.2%', $private['checks']['first_name']['detail']);
         $this->assertStringContainsString('40.0', $private['checks']['image_quality']['detail']);
-        $this->assertEqualsCanonicalizing(['status','message'], array_keys($registered->json('id_check')));
+        $this->assertEqualsCanonicalizing(['status','message','identity_matched'], array_keys($registered->json('id_check')));
     }
 
     public function test_low_full_card_ocr_confidence_does_not_block_strong_matching_fields(): void
@@ -440,6 +443,111 @@ class RegistrationIdTest extends ParkingTestCase
     {
         $e=$this->evidence(['sharpness'=>59.1,'field_confidence'=>['first_name'=>95,'last_name'=>95,'user_code'=>49.3],'number_consensus'=>$this->consensus()]);
         $this->register($this->withReceipt($this->payload(changes:['user_code'=>'202409999']),$e))->assertUnprocessable()->assertJsonValidationErrors('school_id_file');
+    }
+
+    public function test_shs_reader_preserves_compound_name_and_lrn_without_exposing_internal_checks(): void
+    {
+        $e = $this->evidence(['shs_marker' => true]);
+        $e['fields'] = ['first_name' => 'Alyssa Beatrice', 'last_name' => 'Dela Cruz', 'middle_initial' => 'P.', 'user_code' => '000123456789'];
+        $this->mock(InstitutionalIdReader::class)->shouldReceive('read')->once()->withArgs(fn ($path, $mime, $category) => $category === 'shs')->andReturn($e);
+        $file = UploadedFile::fake()->image('shs.png', 1000, 1600);
+        $before = DB::table('users')->count();
+        $r = $this->post('/api/registration/id-check', ['registration_category' => 'shs', 'school_id_file' => $file], ['Accept' => 'application/json'])
+            ->assertOk()->assertJsonPath('data.status', 'matched')->assertJsonPath('data.fields.first_name', 'ALYSSA BEATRICE')
+            ->assertJsonPath('data.fields.middle_initial', 'P.')->assertJsonPath('data.fields.user_code', '000123456789');
+        $this->assertArrayNotHasKey('checks', $r->json('data'));
+        $this->assertArrayNotHasKey('field_confidence', $r->json('data'));
+        $this->assertArrayNotHasKey('reasons', $r->json('data'));
+        $this->assertNotEmpty($r->json('data.receipt'));
+        $this->assertDatabaseCount('users', $before);
+        $this->assertSame([], Storage::disk('private')->allFiles());
+    }
+
+    public function test_shs_requires_current_receipt_and_exact_lrn_and_rechecks_submitted_identity(): void
+    {
+        $payload = $this->payload('shs', ['user_code' => '000123456789', 'department' => 'Senior High School', 'middle_initial' => '']);
+        $e = $this->evidence(['shs_marker' => true]); $e['fields']['user_code'] = $payload['user_code'];
+        $this->register($payload)->assertUnprocessable()->assertJsonValidationErrors('id_check_receipt');
+        foreach (['00012345678', '0001234567890', 'SHS-24-001', '00012345A789'] as $lrn) {
+            Cache::flush();
+            $this->register($this->withReceipt(array_replace($payload, ['user_code' => $lrn]), $e))->assertUnprocessable()->assertJsonValidationErrors('user_code');
+        }
+        Cache::flush();
+        $bad = $this->withReceipt(array_replace($payload, ['first_name' => 'Another Person', 'id_check_status' => 'matched']), $e);
+        $this->register($bad)->assertUnprocessable()->assertJsonValidationErrors('school_id_file');
+        $this->assertDatabaseMissing('users', ['email' => $payload['email']]);
+        $this->assertSame([], Storage::disk('private')->allFiles());
+        $data = $this->withReceipt($payload, $e);
+        $data['school_id_file'] = UploadedFile::fake()->image('other.png', 1200, 1700);
+        $this->register($data)->assertUnprocessable()->assertJsonValidationErrors('id_check_receipt');
+    }
+
+    public function test_normalized_shs_lrn_can_sign_in_and_duplicate_lrn_cannot_register(): void
+    {
+        $payload = $this->payload('shs', ['user_code' => '0001-2345-6789', 'department' => 'Senior High School', 'middle_initial' => '']);
+        $e = $this->evidence(['shs_marker' => true]); $e['fields']['user_code'] = '000123456789';
+        $r = $this->register($this->withReceipt($payload, $e))->assertCreated()->assertJsonPath('id_check.status', 'matched')->assertJsonPath('user.idNum', '000123456789');
+        $id = (int) $r->json('user.id');
+        $this->verifyRegistration($id)->assertOk();
+        $this->assertDatabaseHas('users', ['user_id' => $id, 'account_status' => 'pending', 'user_type' => 'student']);
+        $this->postJson('/api/login', ['identifier' => '0001 2345 6789', 'password' => $payload['password']])->assertOk()->assertJsonPath('user.accountStatus', 'pending');
+        $this->register($this->withReceipt(array_replace($payload, ['user_code' => '0001 2345 6789', 'email' => 'duplicate-shs@example.test']), $e))->assertUnprocessable()->assertJsonValidationErrors('user_code');
+    }
+
+    public function test_shs_without_middle_initial_or_suffix_saves_academics_and_matches_identity(): void
+    {
+        $fields = ['first_name' => 'Juan Miguel', 'last_name' => 'Dela Cruz', 'user_code' => '000123456789'];
+        $e = $this->evidence(['shs_marker' => true, 'fields' => $fields]);
+        $payload = $this->payload('shs', ['user_code' => $fields['user_code'], 'middle_initial' => '', 'suffix' => '', 'section' => '  ferriols   - assh  ']);
+        $r = $this->register($this->withReceipt($payload, $e))->assertCreated()->assertJsonPath('id_check.status', 'matched')
+            ->assertJsonPath('id_check.identity_matched', true)->assertJsonPath('user.yearLevel', '12')->assertJsonPath('user.section', 'FERRIOLS - ASSH');
+        $id = (int) $r->json('user.id');
+        $this->assertDatabaseHas('user_profiles', ['user_id' => $id, 'year_level' => '12', 'section' => 'FERRIOLS - ASSH', 'middle_name' => null, 'suffix' => null]);
+        $p = \App\Models\UserProfile::where('user_id', $id)->first();
+        $this->assertArrayNotHasKey('middle_initial', $p->school_id_check_result['checks']);
+        $this->assertArrayNotHasKey('suffix', $p->school_id_check_result['checks']);
+        $this->verifyRegistration($id)->assertOk();
+        $this->assertDatabaseHas('users', ['user_id' => $id, 'account_status' => 'pending']);
+        $login = $this->postJson('/api/login', ['identifier' => $payload['email'], 'password' => $payload['password']])->assertOk();
+        $this->withHeader('Authorization', 'Bearer '.$login->json('token'))->getJson('/api/me')->assertOk()->assertJsonPath('user.section', 'FERRIOLS - ASSH');
+    }
+
+    public function test_shs_missing_or_invalid_school_details_are_rejected_without_creating_an_account(): void
+    {
+        $payload = $this->payload('shs', ['user_code' => '000123456789', 'middle_initial' => '']);
+        $e = $this->evidence(['shs_marker' => true]); $e['fields']['user_code'] = $payload['user_code'];
+        foreach ([['year_level' => null, 'section' => null], ['year_level' => '13', 'section' => ' '], ['section' => str_repeat('S', 61)]] as $changes) {
+            Cache::flush();
+            $this->register($this->withReceipt(array_replace($payload, $changes), $e))->assertUnprocessable();
+        }
+        $this->assertDatabaseMissing('users', ['email' => $payload['email']]);
+        $this->assertSame([], Storage::disk('private')->allFiles());
+        Cache::flush();
+        $this->register($this->withReceipt($this->payload('employee', ['year_level' => '12', 'section' => 'INJECTED', 'user_code' => '0221234'])))
+            ->assertUnprocessable()->assertJsonValidationErrors(['year_level', 'section']);
+    }
+
+    public function test_shs_academic_profile_updates_are_scoped_validated_and_preserved_in_history(): void
+    {
+        $user = $this->user();
+        $user->profile()->create(['first_name' => 'QA', 'last_name' => 'STUDENT', 'registration_category' => 'shs', 'year_level' => '11', 'section' => 'OLD SECTION', 'contact_number' => '09170000000']);
+        Sanctum::actingAs($user);
+        $this->getJson('/api/profile')->assertOk()->assertJsonPath('data.year_level', '11')->assertJsonPath('data.section', 'OLD SECTION');
+        $this->patchJson('/api/profile', ['contact_number' => '09170000000', 'year_level' => '12', 'section' => ' new  section '])->assertOk();
+        $this->assertDatabaseHas('user_profiles', ['user_id' => $user->user_id, 'year_level' => '12', 'section' => 'NEW SECTION']);
+        $revision = DB::table('record_history')->where('record_type', 'user_profiles')->where('record_id', (string) $user->profile->profile_id)->where('operation', 'updated')->orderByDesc('revision_id')->first();
+        $this->assertNotNull($revision);
+        $this->assertSame('OLD SECTION', json_decode($revision->before_values, true)['section']);
+        $this->assertSame('NEW SECTION', json_decode($revision->after_values, true)['section']);
+        $this->patchJson('/api/profile', ['contact_number' => '09170000000', 'year_level' => '13', 'section' => 'BAD'])->assertUnprocessable()->assertJsonValidationErrors('year_level');
+        $other = $this->user(); $other->profile()->create(['first_name' => 'OTHER', 'last_name' => 'USER', 'registration_category' => 'college']);
+        Sanctum::actingAs($other);
+        $this->getJson('/api/profile')->assertOk()->assertJsonPath('data.section', null);
+        $this->patchJson('/api/profile', ['contact_number' => '09170000000', 'registration_category' => 'shs', 'year_level' => '12', 'section' => 'BAD'])->assertUnprocessable();
+        $this->assertDatabaseHas('user_profiles', ['user_id' => $user->user_id, 'section' => 'NEW SECTION']);
+        $admin = $this->actingAsAdmin(); $admin->roles()->attach(DB::table('roles')->where('role_code', 'admin')->value('role_id'), ['assigned_at' => now()]);
+        $list = $this->getJson('/api/admin/users?search='.$user->email)->assertOk();
+        $this->assertSame('NEW SECTION', $list->json('users.data.0.section'));
     }
 
 }

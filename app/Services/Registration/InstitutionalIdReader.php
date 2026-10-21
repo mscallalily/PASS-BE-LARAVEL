@@ -11,6 +11,9 @@ class InstitutionalIdReader
 
     public function read(string $path, string $mime, string $category): array
     {
+        if ($category === 'shs') {
+            return app(ShsIdReader::class)->read($path, $mime);
+        }
         if ($mime !== 'image/jpeg' && $mime !== 'image/png') {
             return ['kind' => 'pdf', 'engine_available' => true, 'fields' => [], 'field_confidence' => []];
         }
@@ -136,6 +139,10 @@ class InstitutionalIdReader
                         $evidence['number_consensus'] = InstitutionalIdSignals::numberConsensus($reads, $category);
                         $evidence['field_conflicts'][$key] = $this->numberConflict($reads, $category);
                     }
+                    // PASS_NAME_ROW_RECOVERY: preserve the complete line before ranking OCR reads.
+                    if ($key === 'first_name' && max(array_map(fn ($r) => $this->fieldConfidence($r, $key, $category), $reads)) < 90) {
+                        $reads = array_merge($reads, app(InstitutionalNameRows::class)->read($image, $category));
+                    }
                     usort($reads, function ($a, $b) use ($key, $category) {
                         if ($key === 'user_code') {
                             $validA = count(self::numbers($a['text'] ?? '', $category)) === 1;
@@ -179,7 +186,8 @@ class InstitutionalIdReader
                     $text = trim(preg_replace('/[^\pL\pM ,.\'-]/u', '', $text), " .-\t\r\n");
                     if ($text !== '' && mb_strlen($text) <= 100 && count(preg_split('/\s+/', $text)) <= 12
                         && ! preg_match('/COLLEGE|STUDENT|DEPARTMENT|LICENSE|MAINTENANCE|OFFICER|SERVICES|MAGIS/i', $text)) {
-                        $parts = self::nameFields($text, $key);
+                        $parts = InstitutionalNameRows::fields($text, $key);
+                        if (isset($parts['middle_initial'])) $evidence['field_confidence']['middle_initial'] = InstitutionalNameRows::initialConfidence($read, $parts['middle_initial']);
                         if (isset($parts['suffix'])) {
                             if (isset($evidence['fields']['suffix']) && $evidence['fields']['suffix'] !== $parts['suffix']) {
                                 $evidence['field_conflicts']['suffix'] = true;
@@ -342,6 +350,14 @@ class InstitutionalIdReader
 
     public static function numbers(string $text, string $category): array
     {
+        if ($category === 'shs') {
+            // Read maximal numeric runs first so a longer spaced number cannot
+            // be silently shortened to twelve digits.
+            preg_match_all('/(?<![A-Z0-9])[0-9OIL]+(?:[ \t-]+[0-9OIL]+)*(?![A-Z0-9])/i', $text, $matches);
+            $numbers = array_map(fn ($n) => strtr(preg_replace('/[ \t-]+/', '', strtoupper($n)), ['O' => '0', 'I' => '1', 'L' => '1']), $matches[0]);
+
+            return array_values(array_unique(array_filter($numbers, fn ($n) => strlen($n) === 12)));
+        }
         $a = $category === 'employee' ? 3 : 4;
         $b = $category === 'employee' ? 4 : 5;
         preg_match_all('/(?<![A-Z0-9])([0-9OIL]{'.$a.'})[ -]*([0-9OIL]{'.$b.'})(?![A-Z0-9])/i', $text, $matches, PREG_SET_ORDER);

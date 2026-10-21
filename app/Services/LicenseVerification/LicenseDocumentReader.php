@@ -40,9 +40,9 @@ class LicenseDocumentReader
     }
 
     /** Read an already prepared OCR region without re-measuring/downscaling it. */
-    public function readTextImage(string $path, int $pageMode = 6): array
+    public function readTextImage(string $path, int $pageMode = 6, ?int $timeout = null): array
     {
-        return $this->tesseract($path, $pageMode, 20);
+        return $this->tesseract($path, $pageMode, $timeout ?? 20);
     }
 
     private function readImage(string $path, int $pageMode, ?int $timeout): array
