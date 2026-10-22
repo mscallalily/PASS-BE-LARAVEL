@@ -28,6 +28,7 @@ class SystemSettingsController extends Controller
         $settings = DB::table('system_settings')
             ->whereIn('setting_key', self::GENERAL_KEYS)
             ->pluck('setting_value', 'setting_key');
+        $settings->put('timezone', \App\Support\CampusTime::TIMEZONE);
 
         return response()->json(['data' => $settings]);
     }
@@ -47,7 +48,7 @@ class SystemSettingsController extends Controller
             'institution_name' => 'required|string|max:150',
             'contact_email' => 'required|email|max:255',
             'contact_phone' => 'nullable|string|max:30',
-            'timezone' => 'required|in:Asia/Manila,UTC',
+            'timezone' => 'required|in:Asia/Manila',
             'date_format' => 'required|in:MM/DD/YYYY,DD/MM/YYYY,YYYY-MM-DD',
         ])->validate();
 

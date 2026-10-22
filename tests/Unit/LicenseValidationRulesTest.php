@@ -216,7 +216,7 @@ class LicenseValidationRulesTest extends TestCase
     public function test_confidence_and_quality_must_be_known_before_approval(): void
     {
         foreach ([['confidence' => 79.9], ['confidence' => null], ['sharpness' => null], ['width' => null]] as $document) {
-            $this->assertSame('needs_correction', $this->evaluate($document)['decision']);
+            $this->assertSame(array_key_exists('confidence', $document) ? 'pending_review' : 'needs_correction', $this->evaluate($document)['decision']);
         }
         $this->assertSame('verified', $this->evaluate(['confidence' => 80.0])['decision']);
     }
@@ -235,7 +235,7 @@ class LicenseValidationRulesTest extends TestCase
 
     public function test_missing_agency_heading_and_editable_pdf_text_do_not_auto_approve(): void
     {
-        $this->assertSame('needs_correction', $this->evaluate(['text' => str_replace('LAND TRANSPORTATION OFFICE', '', self::CARD_TEXT)])['decision']);
+        $this->assertSame('pending_review', $this->evaluate(['text' => str_replace('LAND TRANSPORTATION OFFICE', '', self::CARD_TEXT)])['decision']);
         $this->assertSame('needs_correction', $this->evaluate(['kind' => 'pdf'])['decision']);
     }
 
@@ -254,5 +254,16 @@ class LicenseValidationRulesTest extends TestCase
         $this->assertFalse(LicenseValidationRules::isLtoFormat('123-45-678901'));
         $this->assertFalse(LicenseValidationRules::isLtoFormat('N01-23-4567'));
         $this->assertSame('N01-23-456789', LicenseValidationRules::formatLicenseNumber('n01 23 456789'));
+    }
+
+    public function test_matching_identity_with_missing_title_is_reviewed_instead_of_returned(): void
+    {
+        $text = str_replace("NON-PROFESSIONAL DRIVER'S LICENSE", 'NON-PROFESSIONAL UNCLEAR DOCUMENT TITLE', self::CARD_TEXT);
+        $result = $this->evaluate(['text' => $text]);
+        $this->assertSame('pending_review', $result['decision']);
+        $this->assertSame('ocr_review_required', $result['decision_kind']);
+        $this->assertSame([], $result['reasons']);
+        $this->assertSame('uncertain', $result['checks']['document_type']['result']);
+        $this->assertSame('pass', $result['checks']['license_number']['result']);
     }
 }

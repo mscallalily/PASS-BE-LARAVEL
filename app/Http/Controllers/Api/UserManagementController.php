@@ -96,7 +96,7 @@ class UserManagementController extends Controller
                 'registrationCategory' => $profile?->registration_category,
                 'yearLevel' => $profile?->year_level,
                 'section' => $profile?->section,
-                'schoolIdCheck' => $profile?->school_id_check_result,
+                'schoolIdCheck' => \App\Services\Registration\InstitutionalIdSignals::forDisplay($profile?->school_id_check_result),
                 'schoolIdSubmitted' => (bool) $profile?->school_id_document_path,
                 'contact' => $profile?->contact_number,
                 'status' => $user->account_status,

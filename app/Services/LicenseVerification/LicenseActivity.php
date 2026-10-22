@@ -75,7 +75,7 @@ class LicenseActivity
             ],
             'pending_review' => [
                 "Driver's license submitted for review",
-                $automatic ? 'The automatic document check could not complete. Your submission remains unapproved. Use Retry automatic check after the reading service is restored.' : 'Your license submission is awaiting a staff exception review.',
+                $automatic ? 'Some required document details could not be confirmed automatically. Your submission remains unapproved. Retry the check or contact PASS staff for review.' : 'Your license submission is awaiting a staff exception review.',
             ],
             'verified' => [
                 "Driver's license verified",

@@ -45,7 +45,7 @@ class SyncController extends Controller
             ],
             'violations' => [DB::table('parking_violations')->selectRaw('MAX(violation_id) m, MAX(updated_at) u')->first()],
             'vehicles' => [
-                DB::table('vehicle_authorizations')->selectRaw('MAX(authorization_id) m, MAX(updated_at) u')->first(),
+                ...$this->vehicleMarkers(),
                 DB::table('driver_licenses')->selectRaw('MAX(license_id) m, MAX(updated_at) u')->first(),
             ],
             'notifications' => [$this->notifications($userId)],
@@ -67,8 +67,20 @@ class SyncController extends Controller
                 DB::table('qr_passes')->where('visitor_id', $visitorId)->selectRaw('MAX(qr_pass_id) m, MAX(updated_at) u')->first(),
                 DB::table('vehicles')->where('owner_visitor_id', $visitorId)->selectRaw('MAX(vehicle_id) m, MAX(updated_at) u')->first(),
             ] : [],
+            'vehicles' => $this->vehicleMarkers((int) $user->user_id),
             'notifications' => [$this->notifications($user->user_id)],
         ];
+    }
+
+    private function vehicleMarkers(?int $ownerId = null): array
+    {
+        $authorizations = DB::table('vehicle_authorizations as va')->join('vehicles as v', 'v.vehicle_id', '=', 'va.vehicle_id')
+            ->when($ownerId !== null, fn ($q) => $q->where('v.owner_user_id', $ownerId));
+        $decisions = DB::table('audit_logs as a')->join('vehicle_authorizations as va', 'va.authorization_id', '=', 'a.auditable_id')
+            ->join('vehicles as v', 'v.vehicle_id', '=', 'va.vehicle_id')
+            ->whereIn('a.auditable_type', ['vehicle_authorizations', \App\Models\VehicleAuthorization::class])
+            ->when($ownerId !== null, fn ($q) => $q->where('v.owner_user_id', $ownerId));
+        return [$authorizations->selectRaw('MAX(va.authorization_id) m, MAX(va.updated_at) u')->first(), $decisions->max('a.log_id')];
     }
 
     private function notifications(int $userId): object

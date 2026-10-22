@@ -44,13 +44,15 @@ class ProcessLicenseVerification implements ShouldQueue
 
         $document = $this->readDocument($license, $reader);
 
-        $result = $rules->evaluate($document, [
+        $submitted = [
             'license_number' => (string) $license->license_number,
-            'license_type' => $license->license_type,
             'expiry_date' => $license->expiry_date?->toDateString() ?? 'today',
             'first_name' => $license->driver?->first_name,
             'last_name' => $license->driver?->last_name,
-        ]);
+        ];
+        // Classification is retired from this workflow, including rechecks.
+        // Legacy stored values remain unchanged for record history.
+        $result = $rules->evaluate($document, $submitted);
 
         $this->store($license, $result['decision'], $result['decision'] === 'needs_correction'
             ? implode("\n", $result['reasons'])
@@ -76,7 +78,7 @@ class ProcessLicenseVerification implements ShouldQueue
                 'preliminary' => true,
                 'official_verification' => 'unavailable',
                 'decision_kind' => 'check_unavailable',
-                'policy_version' => 'license-document-auto-v1',
+                'policy_version' => LicenseValidationRules::POLICY_VERSION,
                 'notes' => ['The automatic check could not complete. The submission remains unapproved. Retry the automatic check after the service is restored.'],
                 'checks' => [],
             ]);
@@ -111,7 +113,7 @@ class ProcessLicenseVerification implements ShouldQueue
         }
 
         try {
-            return $reader->read($disk->path($path), (string) $disk->mimeType($path));
+            return (new \App\Services\LicenseVerification\LicenseOcrRecovery($reader))->read($disk->path($path), (string) $disk->mimeType($path));
         } catch (Throwable $e) {
             report($e);
 
