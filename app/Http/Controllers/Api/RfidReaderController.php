@@ -40,10 +40,18 @@ class RfidReaderController extends Controller
             'direction' => [Rule::requiredIf($reader->reader_direction === 'both'), 'nullable', Rule::in(['in', 'out'])],
         ]);
 
+        $gate = DB::table('access_gates')->where('gate_id', $reader->gate_id)->first();
+        $direction = $reader->reader_direction === 'both' ? $data['direction'] : $reader->reader_direction;
+        if (!$gate || $gate->gate_status !== 'online') {
+            return response()->json(['message' => 'The reader gate is unavailable.'], 423);
+        }
+        if ($gate->gate_type !== 'both' && $gate->gate_type !== ($direction === 'in' ? 'entry' : 'exit')) {
+            return response()->json(['message' => 'This gate does not allow the requested direction.'], 422);
+        }
+
         DB::table('rfid_readers')->where('reader_id', $reader->reader_id)
             ->update(['last_heartbeat_at' => now(), 'reader_status' => 'online', 'updated_at' => now()]);
 
-        $direction = $reader->reader_direction === 'both' ? $data['direction'] : $reader->reader_direction;
         $context = ['gate_id' => $reader->gate_id, 'reader_id' => $reader->reader_id, 'source' => 'reader'];
         $credential = ['rfid_tag_uid' => $data['tag_uid']];
 
