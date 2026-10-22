@@ -102,6 +102,7 @@ Route::post(
     Route::get('/sync/revision', [SyncController::class, 'revision'])->middleware('throttle:120,1,api-action-9:');
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/parking/dashboard', [ParkingDashboardController::class, 'index']);
+    Route::get('/dashboard/mine', [\App\Http\Controllers\Api\UserDashboardController::class, 'show']);
     Route::get('/vehicles/authorizations', [VehicleAuthorizationController::class, 'index']);
     Route::get('/vehicles/my-authorizations', [VehicleAuthorizationController::class, 'mine']);
     Route::patch('/vehicles/authorizations/{id}/suspend', [VehicleAuthorizationController::class, 'suspend'])
