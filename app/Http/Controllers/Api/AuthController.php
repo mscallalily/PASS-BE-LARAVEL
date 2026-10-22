@@ -57,7 +57,10 @@ class AuthController extends Controller
             throw \Illuminate\Validation\ValidationException::withMessages(['user_code' => 'This institutional ID number is already registered. Sign in or recover your account.']);
         }
         $department = Department::where('department_name', trim($data['department']))->where('is_active', true)->first();
-        if ($category === 'college' && (!$department || in_array(strtoupper($department->department_code), ['SHS', 'JHS', 'BED'], true))) {
+        if ($category === 'college' && (! $department
+            || in_array(strtoupper(trim($department->department_code)), ['SHS', 'JHS', 'BED'], true)
+            || in_array(mb_strtoupper(preg_replace('/\s+/u', ' ', trim($department->department_name))),
+                ['SECURITY OFFICE', 'HR DEPARTMENT', 'IT DEPARTMENT', 'REGISTRAR OFFICE'], true))) {
             throw \Illuminate\Validation\ValidationException::withMessages(['department' => 'Choose an active college department.']);
         }
         $unit = $category === 'shs' ? 'Senior High School' : trim($data['department']);

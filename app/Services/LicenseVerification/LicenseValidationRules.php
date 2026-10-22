@@ -12,6 +12,8 @@ use Carbon\CarbonImmutable;
  */
 class LicenseValidationRules
 {
+    public const POLICY_VERSION = 'license-document-auto-v4';
+
     /** Below this Laplacian variance the photo is too blurry to read reliably. */
     public const BLUR_THRESHOLD = 60.0;
 
@@ -71,19 +73,28 @@ class LicenseValidationRules
      */
     public function evaluate(array $document, array $submitted): array
     {
-        $today = CarbonImmutable::parse($submitted['today'] ?? 'today')->startOfDay();
+        $today = isset($submitted['today'])
+            ? CarbonImmutable::parse($submitted['today'], \App\Support\CampusTime::zone())->startOfDay()
+            : \App\Support\CampusTime::now()->startOfDay();
         $text = $this->normalizeText($document['text'] ?? '');
+        $identityConfidence = LicenseFieldConfidence::assess($document, $submitted);
+        $structured = $identityConfidence['available'];
+        $headingText = $structured ? $this->normalizeText(implode("\n", LicenseFieldConfidence::readTexts($document))) : $text;
         $confidence = $document['confidence'] ?? null;
         $textChars = strlen(preg_replace('/[^A-Z0-9]/', '', $text));
         $checks = [];
         $reasons = [];
         $notes = [];
-        $numbers = $this->findLicenseNumbers($text);
+        $numbers = $structured ? array_values(array_unique(array_column($identityConfidence['number_readings'], 'value'))) : $this->findLicenseNumbers($text);
         $dates = $this->findDates($text);
-        $score = $this->documentScore($text);
+        $score = $this->documentScore($headingText);
         $submittedNumber = self::normalizeLicenseNumber($submitted['license_number']);
         $submittedExpiry = CarbonImmutable::parse($submitted['expiry_date'])->startOfDay();
-        $documentExpiry = $dates ? max($dates) : null;
+        $expiryDates = $structured ? array_values(array_unique(array_column(array_filter(
+            $identityConfidence['expiry_readings'], fn ($date) => $date['confidence'] >= self::CONFIDENT
+        ), 'value'))) : array_map(fn ($date) => $date->toDateString(), $this->findExpiryDates($text));
+        $expiryDates = array_values(array_unique($expiryDates));
+        $documentExpiry = count($expiryDates) === 1 ? CarbonImmutable::parse($expiryDates[0])->startOfDay() : null;
         $extracted = [
             'license_numbers' => array_map([self::class, 'formatLicenseNumber'], $numbers),
             'dates' => array_map(fn (CarbonImmutable $d) => $d->toDateString(), $dates),
@@ -130,12 +141,12 @@ class LicenseValidationRules
             return $this->result($reasons, $notes, $checks, $extracted, $score);
         }
 
-        $hasAgency = str_contains($text, 'LAND TRANSPORTATION');
-        $hasTitle = (bool) preg_match("/DRIVER'?S?\\s+LICENSE|STUDENT\\s+PERMIT/", $text);
-        $hasExpiryLabel = (bool) preg_match('/EXPIRATION|EXPIRY/', $text);
+        $hasAgency = str_contains($headingText, 'LAND TRANSPORTATION');
+        $hasTitle = (bool) preg_match("/DRIVER'?S?\\s+LICENSE|STUDENT\\s+PERMIT/", $headingText);
+        $hasExpiryLabel = (bool) preg_match('/EXPIRATION|EXPIRY/', $headingText);
         $recognized = $score >= 4 && $hasAgency && $hasTitle && $hasExpiryLabel;
-        $checks['document_type'] = $this->check($recognized ? 'pass' : 'fail', "Matched {$score} LTO marker groups; agency, document title and expiry heading ".($recognized ? 'present.' : 'could not all be confirmed.'));
-        if (!$recognized) {
+        $checks['document_type'] = $this->check($recognized ? 'pass' : ($score >= 4 ? 'uncertain' : 'fail'), "Matched {$score} LTO marker groups; agency, document title and expiry heading ".($recognized ? 'present.' : 'could not all be confirmed.'));
+        if (!$recognized && $score < 4) {
             $reasons[] = "The required Philippine LTO license headings could not be confirmed. Upload the full, clear front of your license. For a different license format, contact PASS staff.";
         }
 
@@ -143,28 +154,31 @@ class LicenseValidationRules
             $checks['license_number'] = $this->check('pass', 'The license number read from the document matches the submitted number.');
         } elseif ($numbers && $this->closestDistance($submittedNumber, $numbers) <= 1) {
             $checks['license_number'] = $this->check('uncertain', 'The number differs by one character; automatic approval requires an exact normalized match.');
-        } elseif ($numbers) {
+        } elseif ($numbers && (! $structured || $identityConfidence['number_conflict'])) {
             $checks['license_number'] = $this->check('fail', 'The number read from the document does not match the submitted number.');
             $reasons[] = 'The license number on the document ('.self::formatLicenseNumber($numbers[0]).') does not match the number you entered. Correct the number or upload your own license.';
         } else {
             $checks['license_number'] = $this->check('uncertain', 'The license number could not be read.');
         }
 
-        // A matching birth/issue date is not enough: the latest date must be the
-        // submitted, unexpired expiry, with an expiry heading also present.
+        // Only the labeled expiry field is used. Missing/ambiguous expiry OCR
+        // must never turn a birth date into a finding that the license expired.
         if ($documentExpiry && $documentExpiry->equalTo($submittedExpiry) && !$documentExpiry->lt($today) && $hasExpiryLabel) {
-            $checks['expiry_date'] = $this->check('pass', 'The latest date read from the license matches the submitted, unexpired expiry date.');
-        } elseif ($documentExpiry && $documentExpiry->lt($today)) {
-            $checks['expiry_date'] = $this->check('fail', 'The latest date read from the document is expired.');
+            $checks['expiry_date'] = $this->check('pass', 'The date read from the expiration field matches the submitted, unexpired expiry date.');
+        } elseif ($documentExpiry && $documentExpiry->lt($today) && ($structured || $confidence >= self::CONFIDENT)) {
+            $checks['expiry_date'] = $this->check('fail', 'The date confidently read from the expiration field is expired.');
             $reasons[] = 'The license shown on the document appears to be expired. Upload a current license.';
-        } elseif ($documentExpiry && $confidence !== null && $confidence >= self::CONFIDENT) {
+        } elseif ($documentExpiry && ($structured || ($confidence !== null && $confidence >= self::CONFIDENT))) {
             $checks['expiry_date'] = $this->check('fail', 'The document expiry does not match the submitted expiry.');
             $reasons[] = 'The expiration date on the document does not match the date you entered. Check the expiry date and upload the full front of the license.';
         } else {
-            $checks['expiry_date'] = $this->check('uncertain', 'The expiry date could not be confirmed from the document.');
+            $checks['expiry_date'] = $this->check('uncertain', 'The expiration field could not be read consistently. A birth date is not used as the expiry date.');
         }
 
         $name = $this->checkName($text, $submitted['first_name'] ?? null, $submitted['last_name'] ?? null);
+        if ($structured && $identityConfidence['fields']['name'] !== null) {
+            $name = ['result' => 'pass', 'found' => preg_split('/[^A-Z]+/', $this->normalizeText(($submitted['first_name'] ?? '').' '.($submitted['last_name'] ?? '')), -1, PREG_SPLIT_NO_EMPTY)];
+        }
         $extracted['name_tokens_found'] = $name['found'];
         $checks['name'] = $this->check($name['result'] === 'pass' ? 'pass' : 'uncertain', $name['result'] === 'pass'
             ? 'All registered first-name and last-name words were read exactly.'
@@ -182,16 +196,35 @@ class LicenseValidationRules
             $checks['license_type'] = $this->check($typeMatches ? 'pass' : 'uncertain', $typeMatches ? 'The license type matches the document text.' : 'The selected license type could not be confirmed in the document text.');
         }
 
-        return $this->result($reasons, $notes, $checks, $extracted, $score);
+        if ($identityConfidence['available']) {
+            $otherChecksPass = ! $reasons && collect($checks)->except('ocr_confidence')->every(fn ($check) => $check['result'] === 'pass');
+            $reliable = $identityConfidence['reliable'] && $otherChecksPass && $confidence !== null;
+            $fields = $identityConfidence['fields'];
+            $numberBasis = $identityConfidence['number_consensus'] ? 'license number corroborated across whole-card, broad-region and color-region reads'
+                : sprintf('license number %.1f%%', $fields['license_number'] ?? 0);
+            $detail = sprintf('Mean OCR confidence %.1f%%. Required-field evidence: name %.1f%%; expiry %.1f%%; %s. Background/logo text does not determine identity confidence. This measures text recognition, not authenticity.',
+                $confidence ?? 0, $fields['name'] ?? 0, $fields['expiry_date'] ?? 0, $numberBasis);
+            if ($identityConfidence['number_conflict']) $detail .= ' Strong number readings disagree; automatic approval is blocked.';
+            if ($identityConfidence['expiry_conflict']) $detail .= ' Strong expiry readings disagree; automatic approval is blocked.';
+            $checks['ocr_confidence'] = $this->check($reliable ? 'pass' : 'uncertain', $detail);
+        }
+        $result = $this->result($reasons, $notes, $checks, $extracted, $score);
+        $result['identity_confidence'] = $identityConfidence;
+        $result['confidence_basis'] = $identityConfidence['available'] ? 'required_fields_and_corroboration' : 'whole_image_mean';
+        return $result;
     }
 
     private function result(array $reasons, array $notes, array $checks, array $extracted, int $score, bool $unavailable = false): array
     {
-        if (!$unavailable && !$reasons) {
+        $review = !$unavailable && !$reasons && $score >= 4
+            && collect($checks)->except(['ocr_confidence', 'document_type'])->every(fn ($check) => $check['result'] === 'pass')
+            && (($checks['ocr_confidence']['result'] ?? '') !== 'pass' || ($checks['document_type']['result'] ?? '') !== 'pass');
+        if ($review) $notes[] = 'The submitted identity details match the readable text, but the document reading could not be confirmed fully. PASS staff must review it or the automatic check may be retried. This is not a finding that the license is invalid.';
+        if (!$unavailable && !$reasons && !$review) {
             $required = [
                 'image_quality' => 'The image quality could not be confirmed. Upload a clear full-size JPG or PNG.',
                 'text_extraction' => 'Not enough readable text was found. Upload the full license front with all details visible.',
-                'ocr_confidence' => 'The text was not read confidently enough for automatic approval. Retake the photo in good light without glare.',
+                'ocr_confidence' => 'The required license details could not be read consistently enough for automatic approval. Retake the full license front in good light without glare.',
                 'document_type' => 'The required LTO document headings could not be confirmed.',
                 'license_number' => 'The license number could not be matched exactly. Check your entry against the image and upload a clearer photo.',
                 'expiry_date' => 'The expiry date could not be confirmed. Check the date and make sure it is readable in the photo.',
@@ -206,13 +239,13 @@ class LicenseValidationRules
                 }
             }
         }
-        $decision = $reasons ? 'needs_correction' : ($unavailable ? 'pending_review' : 'verified');
+        $decision = $reasons ? 'needs_correction' : (($unavailable || $review) ? 'pending_review' : 'verified');
         $notes[] = 'Automated OCR and document-consistency check only. Authenticity has not been confirmed with the LTO. Account approval, vehicle authorization and RFID assignment remain separate.';
 
         return [
             'decision' => $decision,
-            'decision_kind' => $decision === 'verified' ? 'document_consistency_pass' : ($decision === 'pending_review' ? 'check_unavailable' : 'correction_required'),
-            'policy_version' => 'license-document-auto-v1',
+            'decision_kind' => $decision === 'verified' ? 'document_consistency_pass' : ($decision === 'pending_review' ? ($review ? 'ocr_review_required' : 'check_unavailable') : 'correction_required'),
+            'policy_version' => self::POLICY_VERSION,
             'approval_basis' => 'ocr_document_consistency',
             'reasons' => array_values(array_unique($reasons)),
             'notes' => array_values(array_unique($notes)),
@@ -313,6 +346,21 @@ class LicenseValidationRules
     private function closestDistance(string $value, array $candidates): int
     {
         return min(array_map(fn ($c) => levenshtein($value, $c), $candidates));
+    }
+
+    private function findExpiryDates(string $text): array
+    {
+        $lines = preg_split('/\r?\n/', $text);
+        foreach ($lines as $i => $line) {
+            if (! preg_match('/EXPIRATION|EXPIRY/', $line) || preg_match('/DATE OF BIRTH|NATIONALITY/', $line)) continue;
+            $block = $line;
+            foreach (array_slice($lines, $i + 1, 2) as $next) {
+                if (preg_match('/DATE OF BIRTH|NATIONALITY|BLOOD|EYES|CONDITIONS/', $next)) break;
+                $block .= "\n".$next;
+            }
+            return $this->findDates($block);
+        }
+        return [];
     }
 
     /**

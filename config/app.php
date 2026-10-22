@@ -74,7 +74,7 @@ return [
     | use the campus timezone below. See App\Support\CampusTime.
     */
 
-    'display_timezone' => env('APP_DISPLAY_TIMEZONE', 'Asia/Manila'),
+    'display_timezone' => 'Asia/Manila',
 
     /*
     |--------------------------------------------------------------------------

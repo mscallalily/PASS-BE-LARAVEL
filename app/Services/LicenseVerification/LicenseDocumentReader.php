@@ -70,7 +70,7 @@ class LicenseDocumentReader
             return $result;
         }
 
-        $image = $this->applyExifOrientation($image, $path);
+        $image = $size[2] === IMAGETYPE_JPEG ? $this->applyExifOrientation($image, $path) : $image;
         $result['width'] = imagesx($image);
         $result['height'] = imagesy($image);
 
@@ -182,7 +182,7 @@ class LicenseDocumentReader
 
             $lines["{$cols[2]}-{$cols[3]}-{$cols[4]}"][] = $word;
             $confidences[] = $conf;
-            $words[] = ['text' => $word, 'confidence' => $conf];
+            $words[] = ['text' => $word, 'confidence' => $conf, 'line' => "{$cols[2]}-{$cols[3]}-{$cols[4]}"];
         }
 
         return [

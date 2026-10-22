@@ -88,7 +88,7 @@ class InstitutionalIdRules
         $qualityDetail = sprintf('%d × %d px; sharpness %.1f. Required image size: 500 × 300 px. Sharpness reference: 60; readable matching text can override this advisory.', $evidence['width'] ?? 0, $evidence['height'] ?? 0, $evidence['sharpness'] ?? 0);
         $checks['image_quality'] = ['result' => $quality ? 'pass' : 'uncertain', 'detail' => ($quality ? 'Image quality passed. ' : 'Image quality needs review. ').$qualityDetail];
         $school = $evidence['school_marker'] ?? false;
-        $checks['school'] = ['result' => $school ? 'pass' : 'uncertain', 'detail' => $school ? 'DYCI text was found on the document.' : 'DYCI text could not be confirmed.'];
+        $checks['school'] = ['result' => $school ? 'pass' : 'uncertain', 'detail' => $school ? InstitutionalIdSignals::SCHOOL_NAME.' was found on the document.' : InstitutionalIdSignals::SCHOOL_NAME.' could not be confirmed on the document.'];
         if ($category === 'shs') {
             $shs = ! empty($evidence['shs_marker']);
             $checks['registration_category'] = ['result' => $shs ? 'pass' : 'uncertain', 'detail' => $shs ? 'Senior High School text was found on the document.' : 'Senior High School text could not be confirmed.'];

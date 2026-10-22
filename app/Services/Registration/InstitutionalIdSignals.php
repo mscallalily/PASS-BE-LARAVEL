@@ -5,6 +5,8 @@ namespace App\Services\Registration;
 /** Corroboration from OCR passes, not a probability of identity/authenticity. */
 class InstitutionalIdSignals
 {
+    public const SCHOOL_NAME = "Dr. Yanga's Colleges, Inc.";
+
     private const SOURCES = ['broad_gray', 'broad_threshold', 'broad_color', 'full_card', 'tight_color', 'tight_gray', 'tight_contrast'];
 
     public static function numberConsensus(array $reads, string $category): array
@@ -43,6 +45,23 @@ class InstitutionalIdSignals
             && count($sources) >= 3
             && count(array_intersect($sources, ['broad_gray', 'broad_threshold', 'broad_color', 'full_card'])) > 0
             && count(array_intersect($sources, ['tight_color', 'tight_gray', 'tight_contrast'])) > 0;
+    }
+
+    /** Rename legacy staff-facing copy without changing stored decisions/history. */
+    public static function forDisplay(?array $result): ?array
+    {
+        if ($result === null) return null;
+        $rename = static fn (string $text): string => strtr($text, [
+            'DYCI text was found on the document.' => self::SCHOOL_NAME.' was found on the document.',
+            'DYCI text could not be confirmed.' => self::SCHOOL_NAME.' could not be confirmed on the document.',
+        ]);
+        if (isset($result['checks']['school']['detail']) && is_string($result['checks']['school']['detail'])) {
+            $result['checks']['school']['detail'] = $rename($result['checks']['school']['detail']);
+        }
+        foreach ($result['reasons'] ?? [] as $i => $reason) {
+            if (is_string($reason)) $result['reasons'][$i] = $rename($reason);
+        }
+        return $result;
     }
 
     public static function school(string $text): bool

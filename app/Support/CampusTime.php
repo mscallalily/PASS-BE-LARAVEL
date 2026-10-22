@@ -6,14 +6,16 @@ use Carbon\CarbonImmutable;
 
 /**
  * Times are stored in UTC (config app.timezone); the campus works in
- * config app.display_timezone (Asia/Manila). Use these helpers for calendar
+ * Asia/Manila. Use these helpers for calendar
  * rules so "today" means the campus day, not the UTC day.
  */
 class CampusTime
 {
+    public const TIMEZONE = 'Asia/Manila';
+
     public static function zone(): string
     {
-        return config('app.display_timezone', 'Asia/Manila');
+        return self::TIMEZONE;
     }
 
     /** Current time on campus. */
@@ -51,5 +53,11 @@ class CampusTime
     public static function stored(CarbonImmutable $at): string
     {
         return $at->setTimezone(config('app.timezone'))->toDateTimeString();
+    }
+
+    /** Give raw database timestamps an explicit UTC offset for every client. */
+    public static function apiTimestamp(string|\DateTimeInterface|null $value): ?string
+    {
+        return $value ? CarbonImmutable::parse($value, 'UTC')->utc()->toIso8601String() : null;
     }
 }

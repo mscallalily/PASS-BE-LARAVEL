@@ -69,7 +69,6 @@ Route::post('/reset-password', [AuthController::class, 'resetPassword'])
 
 // Authenticated routes
 Route::middleware(['auth:sanctum', \App\Http\Middleware\RecordHistoryContext::class.':actor', \App\Http\Middleware\AccountAccess::class])->group(function () {
-    Route::post('/vehicles/read-photo', \App\Http\Controllers\Api\VehiclePhotoReadController::class)->middleware('throttle:vehicle-photo-read');
     Route::get(
     '/vehicles/{id}/photo',
     [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'photo']
@@ -78,7 +77,10 @@ Route::middleware(['auth:sanctum', \App\Http\Middleware\RecordHistoryContext::cl
 Route::post(
     '/vehicles/{id}/photo',
     [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'uploadPhoto']
-)->whereNumber('id');
+)->whereNumber('id')->middleware('throttle:vehicle-plate-submit');
+
+Route::post('/vehicles/{id}/resubmit', [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'resubmit'])
+    ->whereNumber('id')->middleware('throttle:vehicle-plate-submit');
 
     Route::patch(
     '/vehicles/authorizations/{id}/review',
@@ -92,7 +94,7 @@ Route::post(
 Route::post(
     '/vehicles',
     [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'store']
-);
+)->middleware('throttle:vehicle-plate-submit');
     Route::get('/admin/users/{id}/school-id', [UserManagementController::class, 'schoolId'])->whereNumber('id');
     Route::get('/me', [AuthController::class, 'me']);
     Route::get('/profile', [\App\Http\Controllers\Api\AccountProfileController::class, 'show']);

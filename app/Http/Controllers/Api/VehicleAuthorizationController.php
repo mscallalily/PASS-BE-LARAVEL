@@ -60,6 +60,7 @@ class VehicleAuthorizationController extends Controller
             ->leftJoin('visitors as vis', 'v.owner_visitor_id', '=', 'vis.visitor_id')
             ->leftJoin('parking_areas as pa', 'va.parking_area_id', '=', 'pa.parking_area_id')
             ->whereNull('v.deleted_at')
+            ->whereRaw('va.authorization_id = (SELECT MAX(latest.authorization_id) FROM vehicle_authorizations latest WHERE latest.vehicle_id = v.vehicle_id)')
             ->select(self::COLUMNS)
             ->addSelect(
                 'u.user_code as owner_code',
@@ -159,6 +160,10 @@ class VehicleAuthorizationController extends Controller
             $vehicle = DB::table('vehicles')->where('vehicle_id', $authorization->vehicle_id)->lockForUpdate()->first();
             if (!$vehicle || $vehicle->deleted_at || $vehicle->registration_status !== 'registered') {
                 return response()->json(['message' => 'Vehicle is no longer registered.'], 422);
+            }
+            $latestId = DB::table('vehicle_authorizations')->where('vehicle_id', $vehicle->vehicle_id)->max('authorization_id');
+            if ((int) $latestId !== (int) $authorization->authorization_id) {
+                return response()->json(['message' => 'A newer submission exists. Refresh and review the latest vehicle details and photo.'], 409);
             }
             if ($data['decision'] === 'approved') {
                 $blockers = $this->liftBlockers($authorization);
@@ -340,14 +345,9 @@ class VehicleAuthorizationController extends Controller
             $blockers[] = 'The visitor who owns this vehicle is blacklisted.';
         }
 
-        $otherApproved = DB::table('vehicle_authorizations')
-            ->where('vehicle_id', $authorization->vehicle_id)
-            ->where('authorization_id', '!=', $authorization->authorization_id)
-            ->where('authorization_status', 'approved')
-            ->exists();
-
-        if ($otherApproved) {
-            $blockers[] = 'Another approved authorization already exists for this vehicle.';
+        $latestId = DB::table('vehicle_authorizations')->where('vehicle_id', $authorization->vehicle_id)->max('authorization_id');
+        if ((int) $latestId !== (int) $authorization->authorization_id) {
+            $blockers[] = 'A newer authorization exists. Review the current vehicle record.';
         }
 
         // When drivers are linked, at least one must be active, still
