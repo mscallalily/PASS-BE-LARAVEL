@@ -122,6 +122,7 @@ class ParkingAccessService
             return $this->deny($fresh, $problem ?? 'Credential or vehicle changed. Scan again.', 'in', $actor, $context, $at);
         }
         $id = $fresh; $vehicle = $fresh['vehicle'];
+        if ($area && !\App\Support\VehicleParkingArea::accepts($vehicle->type_code, $area)) return $this->deny($id, 'This vehicle type cannot use this parking lot. Contact PASS staff.', 'in', $actor, $context, $at);
         if (!$area || !$area->is_active) return $this->deny($id, 'The parking area is unavailable.', 'in', $actor, $context, $at);
 
 
@@ -547,7 +548,6 @@ class ParkingAccessService
 
             $authorization = DB::table('vehicle_authorizations')
                 ->where('vehicle_id', $vehicle->vehicle_id)
-                ->orderByRaw("authorization_status = 'approved' desc")
                 ->orderByDesc('authorization_id')
                 ->first();
 
@@ -849,7 +849,7 @@ class ParkingAccessService
             ->join('vehicle_types as vt', 'vt.vehicle_type_id', '=', 'v.vehicle_type_id')
             ->where($where)
             ->whereNull('v.deleted_at')
-            ->first(['v.*', 'vt.type_name', 'vt.parking_area_id as area_id']);
+            ->first(['v.*', 'vt.type_name', 'vt.type_code', 'vt.parking_area_id as area_id']);
     }
 
     private function driverId(object $vehicle): ?int

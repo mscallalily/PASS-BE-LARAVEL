@@ -43,6 +43,7 @@ class RfidAssignmentController extends Controller
                     throw ValidationException::withMessages(['vehicle_id' => 'The vehicle owner must be an active student, faculty member or employee.']);
                 }
                 $authorized = DB::table('vehicle_authorizations')->where('vehicle_id', $vehicle->vehicle_id)->where('authorization_status', 'approved')
+                    ->where('authorization_id', DB::table('vehicle_authorizations')->where('vehicle_id', $vehicle->vehicle_id)->max('authorization_id'))
                     ->where(fn ($q) => $q->whereNull('valid_from')->orWhere('valid_from', '<=', $today))
                     ->where(fn ($q) => $q->whereNull('valid_until')->orWhere('valid_until', '>=', $today))->exists();
                 if (!$authorized) throw ValidationException::withMessages(['vehicle_id' => 'An approved, currently valid vehicle authorization is required.']);

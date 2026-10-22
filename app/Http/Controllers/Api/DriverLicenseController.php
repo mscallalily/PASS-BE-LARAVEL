@@ -24,8 +24,6 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class DriverLicenseController extends Controller
 {
-    private const LICENSE_TYPES = ['student_permit', 'non_professional', 'professional', 'international'];
-
     private const STATUSES = ['processing', 'needs_correction', 'pending_review', 'verified'];
 
     /**
@@ -46,7 +44,7 @@ class DriverLicenseController extends Controller
     public function submit(Request $request): JsonResponse
     {
         $user = $request->user();
-        $today = now()->startOfDay();
+        $today = \App\Support\CampusTime::now()->startOfDay();
 
         $data = $request->validate([
             'license_number' => ['required', 'string', 'max:20', function ($attribute, $value, $fail) {
@@ -54,7 +52,6 @@ class DriverLicenseController extends Controller
                     $fail('Enter the license number in the LTO format, for example N01-23-456789.');
                 }
             }],
-            'license_type' => ['required', Rule::in(self::LICENSE_TYPES)],
             'expiry_date' => [
                 'required',
                 'date_format:Y-m-d',
@@ -112,6 +109,13 @@ class DriverLicenseController extends Controller
                     ], 409);
                 }
 
+                if ($license && ! $this->canResubmit($license)) {
+                    return response()->json([
+                        'message' => 'Your approved license is already on file. Contact PASS staff for a correction. Renewal becomes available after expiry.',
+                        'code' => 'license_already_verified',
+                    ], 409);
+                }
+
                 if ($this->numberTakenByAnotherLicense($number, $license?->license_id)) {
                     return response()->json([
                         'message' => 'This license number is already registered to another account.',
@@ -121,7 +125,7 @@ class DriverLicenseController extends Controller
 
                 $attributes = [
                     'license_number' => $number,
-                    'license_type' => $data['license_type'],
+                    'license_type' => null, // Classification is no longer collected on submissions.
                     'expiry_date' => $data['expiry_date'],
                     'license_image_path' => $path,
                     'original_file_name' => Str::limit($file->getClientOriginalName(), 250, ''),
@@ -226,6 +230,9 @@ class DriverLicenseController extends Controller
             ->orderByDesc(DB::raw('COALESCE(dl.submitted_at, dl.created_at)'))
             ->get()
             ->map(function ($row) {
+                foreach (['submitted_at', 'checked_at', 'reviewed_at'] as $field) {
+                    $row->$field = \App\Support\CampusTime::apiTimestamp($row->$field);
+                }
                 $row->has_file = (bool) $row->has_file;
                 $row->ocr_result = $row->ocr_result ? json_decode($row->ocr_result, true) : null;
                 return $row;
@@ -302,7 +309,8 @@ class DriverLicenseController extends Controller
                 ], 409);
             }
 
-            if ($data['decision'] === 'verified' && $license->expiry_date?->lt(now()->startOfDay())) {
+            if ($data['decision'] === 'verified' && $license->expiry_date
+                && $license->expiry_date->toDateString() < \App\Support\CampusTime::date()) {
                 return response()->json([
                     'message' => 'An expired license cannot be marked as verified.',
                 ], 422);
@@ -439,6 +447,7 @@ class DriverLicenseController extends Controller
             'license_number' => $license->license_number,
             'license_type' => $license->license_type,
             'expiry_date' => $license->expiry_date?->toDateString(),
+            'can_resubmit' => $this->canResubmit($license),
             'original_file_name' => $license->original_file_name,
             'has_file' => (bool) $license->license_image_path,
             'submitted_at' => ($license->submitted_at ?? $license->created_at)?->toIso8601String(),
@@ -448,5 +457,13 @@ class DriverLicenseController extends Controller
             'checked_at' => $license->checked_at?->toIso8601String(),
             'reviewed_at' => $license->reviewed_at?->toIso8601String(),
         ];
+    }
+
+    private function canResubmit(DriverLicense $license): bool
+    {
+        if ($license->verification_status === 'processing') return false;
+        if ($license->verification_status !== 'verified') return true;
+        return $license->expiry_date !== null
+            && $license->expiry_date->toDateString() < now('Asia/Manila')->toDateString();
     }
 }

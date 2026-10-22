@@ -80,6 +80,10 @@ class ShsIdReader
             imagedestroy($image);
         }
 
+        if (! $evidence['school_marker']) {
+            $evidence['school_marker'] = (new InstitutionalSchoolBranding($this->reader))->confirm($path, 'shs', $deadline);
+        }
+
         return $evidence;
     }
 

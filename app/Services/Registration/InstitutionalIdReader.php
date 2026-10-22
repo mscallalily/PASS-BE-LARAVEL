@@ -258,47 +258,7 @@ class InstitutionalIdReader
 
     private function readSchoolBranding(string $path, string $category): bool
     {
-        $image = @imagecreatefromstring(file_get_contents($path));
-        if (! $image) {
-            return false;
-        }
-        // Same orientation handling as field extraction.
-        $orientation = function_exists('exif_read_data') ? (@exif_read_data($path)['Orientation'] ?? 1) : 1;
-        $angle = match ((int) $orientation) {
-            3 => 180, 6 => -90, 8 => 90, default => 0
-        };
-        if ($angle) {
-            $rotated = imagerotate($image, $angle, 0);
-            imagedestroy($image);
-            $image = $rotated;
-        }
-        $boxes = $category === 'employee' ? [[.38, 0, .995, .23], [.48, .94, .995, 1]] : [[.02, 0, .995, .25]];
-        try {
-            foreach ($boxes as [$l, $t, $r, $b]) {
-                $crop = imagecrop($image, ['x' => (int) ($l * imagesx($image)), 'y' => (int) ($t * imagesy($image)),
-                    'width' => max(1, (int) (($r - $l) * imagesx($image))), 'height' => max(1, (int) (($b - $t) * imagesy($image)))]);
-                if (! $crop) {
-                    continue;
-                }
-                $scaled = imagescale($crop, 1600, -1, IMG_BILINEAR_FIXED);
-                imagedestroy($crop);
-                $temp = tempnam(sys_get_temp_dir(), 'pass_brand_');
-                try {
-                    imagepng($scaled, $temp);
-                    $read = $this->reader->readTextImage($temp, 6);
-                    if (InstitutionalIdSignals::school($read['text'] ?? '')) {
-                        return true;
-                    }
-                } finally {
-                    imagedestroy($scaled);
-                    @unlink($temp);
-                }
-            }
-        } finally {
-            imagedestroy($image);
-        }
-
-        return false;
+        return (new InstitutionalSchoolBranding($this->reader))->confirm($path, $category);
     }
 
     /** Keep suffix and initial separate without splitting compound surnames. */

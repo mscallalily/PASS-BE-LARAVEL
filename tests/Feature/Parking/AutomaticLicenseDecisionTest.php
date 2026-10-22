@@ -177,6 +177,7 @@ class AutomaticLicenseDecisionTest extends ParkingTestCase
         $this->assertSame($admin->user_id, $license->reviewed_by);
         $this->assertSame('Original inspected for OCR exception.', $license->verification_reason);
         $this->assertDatabaseHas('audit_logs', ['auditable_id' => $license->license_id, 'action' => 'license_review_verified', 'user_id' => $admin->user_id]);
+        $this->patchJson("/api/licenses/{$license->license_id}/review", ['decision' => 'needs_correction', 'reason' => 'Updated document required after the staff review.'])->assertOk();
         Sanctum::actingAs($car['user']);
         $oldPath = $license->license_image_path;
         $this->reader($this->document($license));
@@ -187,5 +188,95 @@ class AutomaticLicenseDecisionTest extends ParkingTestCase
         ], ['Accept' => 'application/json'])->assertCreated()->assertJsonPath('data.verification_status', 'verified')->assertJsonPath('data.verification_source', 'automatic');
         $this->assertNull($license->fresh()->reviewed_by);
         Storage::disk('private')->assertExists($oldPath);
+    }
+
+    public function test_submission_without_type_is_verified_and_previous_classification_is_retained_in_history(): void
+    {
+        [$car, $license] = $this->fixture();
+        $license->forceFill(['verification_status' => 'needs_correction'])->save();
+        $oldPath = $license->license_image_path;
+        Sanctum::actingAs($car['user']);
+        $this->reader($this->document($license));
+        $this->post('/api/licenses', [
+            'license_number' => $license->license_number,
+            'expiry_date' => $license->expiry_date->toDateString(),
+            'license_file' => UploadedFile::fake()->image('unclassified.png', 1700, 1071),
+        ], ['Accept' => 'application/json'])->assertCreated()
+            ->assertJsonPath('data.verification_status', 'verified')->assertJsonPath('data.license_type', null);
+        $license->refresh();
+        $this->assertNull($license->license_type);
+        $this->assertArrayNotHasKey('license_type', $license->ocr_result['checks']);
+        Storage::disk('private')->assertExists($oldPath);
+        $history = DB::table('record_history')->where('record_type', 'driver_licenses')
+            ->where('record_id', (string) $license->license_id)->where('operation', 'updated')->get();
+        $this->assertTrue($history->contains(function ($row) {
+            $before = json_decode($row->before_values, true); $after = json_decode($row->after_values, true);
+            return ($before['license_type'] ?? null) === 'non_professional'
+                && array_key_exists('license_type', $after) && $after['license_type'] === null;
+        }));
+    }
+
+    public function test_type_from_an_old_client_is_ignored_and_cannot_override_mismatching_name(): void
+    {
+        [$car, $license] = $this->fixture();
+        $license->forceFill(['verification_status' => 'needs_correction'])->save();
+        Sanctum::actingAs($car['user']);
+        $this->reader($this->document($license, ['text' => str_replace('TEST DRIVER', 'SOMEONE ELSE', $this->document($license)['text'])]));
+        $this->post('/api/licenses', [
+            'license_number' => $license->license_number, 'license_type' => 'non_professional',
+            'expiry_date' => $license->expiry_date->toDateString(),
+            'license_file' => UploadedFile::fake()->image('wrong-name.png', 1700, 1071),
+        ], ['Accept' => 'application/json'])->assertCreated()
+            ->assertJsonPath('data.verification_status', 'needs_correction')->assertJsonPath('data.license_type', null);
+        $this->assertStringContainsString('name', $license->fresh()->verification_reason);
+    }
+
+    public function test_unclassified_verified_license_supports_rfid_assignment_entry_and_exit(): void
+    {
+        [$car, $license] = $this->fixture();
+        $license->forceFill(['verification_status' => 'needs_correction'])->save();
+        Sanctum::actingAs($car['user']);
+        $this->reader($this->document($license));
+        $this->post('/api/licenses', [
+            'license_number' => $license->license_number, 'expiry_date' => $license->expiry_date->toDateString(),
+            'license_file' => UploadedFile::fake()->image('ready.png', 1700, 1071),
+        ], ['Accept' => 'application/json'])->assertCreated()->assertJsonPath('data.verification_status', 'verified');
+        $this->actingAsAdmin();
+        $assignment = DB::table('rfid_assignments')->where('vehicle_id', $car['vehicle_id'])->where('assignment_status', 'active')->first();
+        $this->patchJson('/api/rfid/assignments/'.$assignment->assignment_id.'/revoke')->assertOk();
+        $tag = 'TEST-NO-TYPE-'.Str::upper(Str::random(10));
+        $this->postJson('/api/rfid/assignments', ['vehicle_id' => $car['vehicle_id'], 'tag_uid' => $tag])->assertCreated();
+        $this->actingAsStaff();
+        $this->postJson('/api/parking/entry', ['rfid_tag_uid' => $tag])->assertOk()->assertJsonPath('status', 'granted');
+        $this->postJson('/api/parking/exit', ['rfid_tag_uid' => $tag])->assertOk()->assertJsonPath('status', 'completed');
+        $this->assertNull($license->fresh()->license_type);
+    }
+
+
+    public function test_first_license_upload_creates_record_without_classification(): void
+    {
+        $user = $this->user('employee');
+        DB::table('user_profiles')->insert(['user_id' => $user->user_id, 'first_name' => 'Test', 'last_name' => 'Driver', 'created_at' => now(), 'updated_at' => now()]);
+        Sanctum::actingAs($user);
+        $expiry = now()->addYears(3)->toDateString();
+        $prototype = new DriverLicense(['license_number' => 'N01-23-456789', 'expiry_date' => $expiry]);
+        $this->reader($this->document($prototype));
+        $response = $this->post('/api/licenses', ['license_number' => 'N01-23-456789', 'expiry_date' => $expiry,
+            'license_file' => UploadedFile::fake()->image('first-license.png', 1700, 1071)], ['Accept' => 'application/json'])
+            ->assertCreated()->assertJsonPath('data.verification_status', 'verified')->assertJsonPath('data.license_type', null);
+        $license = DriverLicense::findOrFail($response->json('data.license_id'));
+        $this->assertNull($license->license_type);
+        $this->assertSame($user->user_id, $license->driver->user_id);
+        $this->assertArrayNotHasKey('license_type', $license->ocr_result['checks']);
+    }
+
+    public function test_recheck_does_not_require_retired_classification_and_keeps_legacy_value(): void
+    {
+        [$car, $license] = $this->fixture();
+        $license->forceFill(['license_type' => 'international'])->save();
+        $this->process($license);
+        $this->assertSame('verified', $license->verification_status);
+        $this->assertSame('international', $license->license_type);
+        $this->assertArrayNotHasKey('license_type', $license->ocr_result['checks']);
     }
 }
