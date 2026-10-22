@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#080677"><title>PASS · Gate Monitoring</title>
+<link rel="stylesheet" href="/bridge.css"><script type="module" src="/bridge.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#monitor" aria-label="PASS gate monitoring"><img class="pass-logo" src="/branding/pass-logo.png" alt="PASS"><b class="logo-fallback" hidden>PASS</b></a>
+  <div class="brand-caption"><strong>DR. YANGA’S COLLEGES, INC.</strong><span>Parking Access and Space Management System</span></div>
+  <div class="topbar-end"><div class="clock"><time id="clock">—</time><span id="date">Philippine time</span></div><button id="fullscreen" class="icon-button" aria-label="Enter fullscreen" title="Enter fullscreen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></button></div>
+</header>
+<main id="monitor">
+  <div class="heading"><div><p class="eyebrow">PASS · GATE OPERATIONS</p><h1>Gate Monitoring<span class="heading-dot">.</span></h1><p class="subtitle"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 6-8 11-8 11S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg><span id="gate-name">Main Entrance / Exit</span><span class="subtitle-divider"></span>USB RFID reader</p></div><span id="state" class="capture-status paused"><i></i><span>Paused</span></span></div>
+  <div id="setup-error" class="notice danger" role="alert" hidden></div>
+  <div class="monitor-grid">
+    <section id="scan-display" class="scan-display" data-view="paused" aria-label="Current scan result" aria-busy="false">
+      <div class="display-top"><span id="display-context" class="display-context">READER STANDBY</span><span id="display-direction" class="direction-tag"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6"/></svg><span>ENTRY MODE</span></span></div>
+      <div class="display-body">
+        <div class="display-copy"><div id="status-label" class="status-label"><span></span><b id="status-word">SCANNING PAUSED</b></div><h2 id="scan-title">Every arrival.<br>Accounted for.</h2><p id="scan-description">Select Entry or Exit, then start scanning when the gate is ready.</p></div>
+        <div class="reader-visual" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="visual-core"><svg viewBox="0 0 64 64"><g data-icon="reader"><rect x="11" y="17" width="42" height="30" rx="5"/><path d="M19 27h9m-9 9h5m15-12c7 5 7 11 0 16m6-21c11 8 11 18 0 26"/></g><g data-icon="check" hidden><path d="m17 33 10 10 22-24"/></g><g data-icon="cross" hidden><path d="m21 21 22 22m0-22L21 43"/></g><g data-icon="warning" hidden><path d="m32 10 25 43H7zM32 26v12m0 7v1"/></g><g data-icon="clock" hidden><circle cx="32" cy="32" r="23"/><path d="M32 18v15l10 6"/></g></svg></div><span class="visual-chip">RFID ACCESS CONTROL</span></div>
+      </div>
+      <div id="vehicle-details" class="vehicle-details" hidden><div class="plate-card"><span class="detail-label">VEHICLE PLATE</span><strong id="plate">—</strong></div><div class="slot-card"><span id="slot-label" class="detail-label">ASSIGNED SLOT</span><strong id="slot">—</strong></div></div>
+      <div id="ready-guide" class="ready-guide"><span class="guide-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v12H4zM8 4h8M8 11h3m5-1c3 2 3 4 0 6"/></svg></span><div><strong>One vehicle. One tag. One result.</strong><p>Keep other RFID tags outside the reader’s range.</p></div></div>
+      <div class="display-foot"><span id="scan-tag">Awaiting RFID scan</span><time id="scan-time"></time></div>
+    </section>
+    <section class="control-panel" aria-labelledby="control-title">
+      <div class="panel-heading"><span class="small-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></svg></span><div><h2 id="control-title">Reader controls</h2><p>Choose the direction of travel.</p></div></div>
+      <div class="modes" role="group" aria-label="Scan direction"><button id="entry" class="mode selected" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v16h-6M3 12h12m-4-4 4 4-4 4"/></svg><span><strong>Entry</strong><small>Arriving</small></span><span class="mode-check" aria-hidden="true">✓</span></button><button id="exit" class="mode" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4v16h6m11-8H9m8-4 4 4-4 4"/></svg><span><strong>Exit</strong><small>Leaving</small></span><span class="mode-check" aria-hidden="true">✓</span></button></div>
+      <div class="actions"><button id="start" class="primary" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 4 12 8-12 8z"/></svg>Start scanning</button><button id="pause" class="secondary" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14m8-14v14"/></svg>Pause</button></div>
+      <label for="epc">RFID tag EPC<span>24 characters · Enter to read</span></label><div class="input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M8 8v8m4-8v8m4-8v8"/></svg><input id="epc" type="text" maxlength="160" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Waiting for reader…" disabled aria-describedby="capture-hint"></div>
+      <p id="capture-hint" class="hint">Keep this field focused while scanning. Leaving it pauses the reader.</p>
+      <div id="message" class="notice" role="status">Connecting to the local reader…</div>
+      <label id="review-wrap" class="review" hidden><input type="checkbox" id="reviewed"><span>I checked PASS access records for the last scan before resuming.</span></label>
+      <details class="connection-details"><summary>Connection details<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></summary><dl class="connection"><div><dt>Reader</dt><dd id="reader-code">—</dd></div><div><dt>PASS API</dt><dd id="api">—</dd></div></dl></details>
+    </section>
+  </div>
+  <section class="session-summary" aria-label="Scans in this window"><div class="session-caption"><span class="session-mark"></span><div><strong>This session</strong><span>Resets when this page reloads</span></div></div><div class="metric"><span class="metric-icon entry-color"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v16h-6M3 12h12m-4-4 4 4-4 4"/></svg></span><div><strong id="count-entry">0</strong><span>Entries recorded</span></div></div><div class="metric"><span class="metric-icon exit-color"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4v16h6m11-8H9m8-4 4 4-4 4"/></svg></span><div><strong id="count-exit">0</strong><span>Exits recorded</span></div></div><div class="metric"><span class="metric-icon deny-color"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m6 6 12 12"/></svg></span><div><strong id="count-denied">0</strong><span>Entries denied</span></div></div></section>
+  <section id="results-panel" class="history-panel" aria-labelledby="history-title"><div class="history-heading"><div><p class="eyebrow">AT A GLANCE</p><h2 id="history-title">Recent scans</h2></div><span class="history-limit">Latest 30 · This window only</span></div><div id="empty" class="empty"><span class="empty-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v15H4zM8 9h8m-8 4h5m-5 4h3"/></svg></span><div><h3>Your next scan starts the log.</h3><p>Results appear here after PASS responds. Saved records are in RFID Access Records.</p></div></div><div id="history-columns" class="history-columns" aria-hidden="true" hidden><span>VEHICLE / RFID TAG</span><span>DIRECTION</span><span>RESULT</span><span>SLOT</span><span>PHILIPPINE TIME</span></div><ol id="results" aria-label="Recent scan results"></ol></section>
+  <p id="result-announcement" class="sr-only" aria-live="polite" aria-atomic="true"></p>
+  <footer><span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4v6c0 4-8 8-8 8S4 17 4 13V7zM8 12l3 3 5-6"/></svg>Verify the actual driver and vehicle at the gate.</span><span>Access records only · Barrier control is not connected.</span></footer>
+</main>
+</body></html>
