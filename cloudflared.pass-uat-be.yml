@@ -1,0 +1,8 @@
+tunnel: 50b2b053-d704-488a-8aa1-71bf16fe35e4
+credentials-file: /home/vintechserver/.cloudflared/50b2b053-d704-488a-8aa1-71bf16fe35e4.json
+
+ingress:
+  - hostname: pass-be.edu-nexus.org
+    service: http://127.0.0.1:8090
+
+  - service: http_status:404

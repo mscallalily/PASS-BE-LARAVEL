@@ -16,8 +16,6 @@ return new class extends Migration
             ])->default('pending');
 
             $table->text('review_notes')->nullable();
-            $table->unsignedBigInteger('reviewed_by')->nullable();
-            $table->timestamp('reviewed_at')->nullable();
         });
     }
 
@@ -27,8 +25,6 @@ return new class extends Migration
             $table->dropColumn([
                 'review_status',
                 'review_notes',
-                'reviewed_by',
-                'reviewed_at',
             ]);
         });
     }

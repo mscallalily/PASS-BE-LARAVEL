@@ -1,0 +1,64 @@
+services:
+  pass-api:
+    container_name: pass-api
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+
+    env_file:
+      - .env.uat
+
+    ports:
+      - "127.0.0.1:8090:80"
+
+    volumes:
+      - pass_storage:/var/www/html/storage
+
+    depends_on:
+      pass-mysql:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1/ >/dev/null || exit 1"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  pass-mysql:
+    image: mysql:8.4
+    container_name: pass-mysql
+    restart: unless-stopped
+
+    command:
+    - --log-bin-trust-function-creators=1
+
+    environment:
+      MYSQL_DATABASE: pass_db
+      MYSQL_USER: pass_user
+      MYSQL_PASSWORD: pass_password
+      MYSQL_ROOT_PASSWORD: pass_password
+
+    volumes:
+      - pass_mysql_data:/var/lib/mysql
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  pass_storage:
+  pass_mysql_data:

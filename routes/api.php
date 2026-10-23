@@ -21,8 +21,6 @@ use App\Http\Controllers\Api\VisitorAccessController;
 use App\Http\Controllers\Api\DeviceSimulatorController;
 use App\Http\Controllers\Api\GuestAccountController;
 use App\Http\Controllers\Api\SyncController;
-use App\Http\Controllers\Api\AdminDashboardController;
-use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\SystemSettingsController;
 use App\Http\Controllers\Api\ParkingSlotSimulationController;
 
