@@ -1,3 +1,5 @@
+name: pass-uat
+
 services:
   pass-api:
     container_name: pass-api
@@ -37,7 +39,7 @@ services:
     restart: unless-stopped
 
     command:
-    - --log-bin-trust-function-creators=1
+      - --log-bin-trust-function-creators=1
 
     environment:
       MYSQL_DATABASE: pass_db
@@ -61,4 +63,9 @@ services:
 
 volumes:
   pass_storage:
+    external: true
+    name: pass-be-laravel_pass_storage
+
   pass_mysql_data:
+    external: true
+    name: pass-be-laravel_pass_mysql_data
