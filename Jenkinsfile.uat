@@ -1,0 +1,362 @@
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+    }
+
+    environment {
+        COMPOSE_FILE = 'compose.production.yml'
+        API_SERVICE = 'pass-api'
+        LOCAL_API_URL = 'http://127.0.0.1:8090'
+        PUBLIC_API_URL = 'https://pass-be.edu-nexus.org'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Prepare UAT Environment') {
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'pass-uat-app-key',
+                        variable: 'PASS_APP_KEY'
+                    ),
+                    string(
+                        credentialsId: 'pass-uat-db-password',
+                        variable: 'PASS_DB_PASSWORD'
+                    ),
+                    string(
+                        credentialsId: 'pass-uat-db-root-password',
+                        variable: 'PASS_DB_ROOT_PASSWORD'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+
+                        umask 077
+
+                        cat > .env.uat <<EOF
+APP_NAME=PASS
+APP_ENV=production
+APP_KEY=$PASS_APP_KEY
+APP_DEBUG=false
+APP_URL=https://pass-be.edu-nexus.org
+
+FRONTEND_URL=http://localhost
+
+APP_LOCALE=en
+APP_FALLBACK_LOCALE=en
+APP_FAKER_LOCALE=en_US
+
+APP_MAINTENANCE_DRIVER=file
+
+PHP_CLI_SERVER_WORKERS=4
+
+BCRYPT_ROUNDS=12
+
+LOG_CHANNEL=stack
+LOG_STACK=single
+LOG_DEPRECATIONS_CHANNEL=null
+LOG_LEVEL=info
+
+DB_CONNECTION=mysql
+DB_HOST=pass-mysql
+DB_PORT=3306
+DB_DATABASE=pass_db
+DB_USERNAME=pass_user
+DB_PASSWORD=$PASS_DB_PASSWORD
+
+MYSQL_DATABASE=pass_db
+MYSQL_USER=pass_user
+MYSQL_PASSWORD=$PASS_DB_PASSWORD
+MYSQL_ROOT_PASSWORD=$PASS_DB_ROOT_PASSWORD
+
+SESSION_DRIVER=file
+SESSION_LIFETIME=120
+SESSION_ENCRYPT=false
+SESSION_PATH=/
+SESSION_DOMAIN=null
+
+BROADCAST_CONNECTION=log
+FILESYSTEM_DISK=local
+QUEUE_CONNECTION=sync
+
+CACHE_STORE=file
+
+MEMCACHED_HOST=127.0.0.1
+
+REDIS_CLIENT=phpredis
+REDIS_HOST=127.0.0.1
+REDIS_PASSWORD=null
+REDIS_PORT=6379
+
+MAIL_MAILER=log
+MAIL_SCHEME=null
+MAIL_HOST=127.0.0.1
+MAIL_PORT=2525
+MAIL_USERNAME=null
+MAIL_PASSWORD=null
+MAIL_FROM_ADDRESS=hello@example.com
+MAIL_FROM_NAME=PASS
+
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_DEFAULT_REGION=us-east-1
+AWS_BUCKET=
+AWS_USE_PATH_STYLE_ENDPOINT=false
+
+VITE_APP_NAME=PASS
+
+TESSERACT_PATH=tesseract
+PDFTOTEXT_PATH=pdftotext
+
+PASS_SAMPLE_PASSWORD=
+
+PASS_SIMULATOR_ENABLED=false
+PASS_SIMULATOR_TESTERS=
+
+PASS_DEMO_ADMIN_PASSWORD=
+EOF
+
+                        chmod 600 .env.uat
+
+                        echo "PASS UAT environment prepared."
+                    '''
+                }
+            }
+        }
+
+        stage('Validate Compose') {
+            steps {
+                sh '''
+                    set -e
+
+                    docker compose \
+                        -f "$COMPOSE_FILE" \
+                        config --quiet
+
+                    echo "Docker Compose configuration is valid."
+                '''
+            }
+        }
+
+        stage('Build API') {
+            steps {
+                sh '''
+                    set -e
+
+                    docker compose \
+                        -f "$COMPOSE_FILE" \
+                        build "$API_SERVICE"
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh '''
+                    set -e
+
+                    docker compose \
+                        -f "$COMPOSE_FILE" \
+                        up -d
+                '''
+            }
+        }
+
+        stage('Wait for Services') {
+            steps {
+                sh '''
+                    set -e
+
+                    ATTEMPT=1
+                    MAX_ATTEMPTS=30
+
+                    while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+
+                        API_HEALTH=$(docker inspect \
+                            --format='{{.State.Health.Status}}' \
+                            pass-api 2>/dev/null || echo "missing")
+
+                        MYSQL_HEALTH=$(docker inspect \
+                            --format='{{.State.Health.Status}}' \
+                            pass-mysql 2>/dev/null || echo "missing")
+
+                        echo "Attempt $ATTEMPT/$MAX_ATTEMPTS"
+                        echo "PASS API:   $API_HEALTH"
+                        echo "PASS MySQL: $MYSQL_HEALTH"
+
+                        if [ "$API_HEALTH" = "healthy" ] && \
+                           [ "$MYSQL_HEALTH" = "healthy" ]; then
+                            echo "All PASS services are healthy."
+                            exit 0
+                        fi
+
+                        ATTEMPT=$((ATTEMPT + 1))
+                        sleep 3
+                    done
+
+                    echo "Services did not become healthy."
+
+                    docker compose \
+                        -f "$COMPOSE_FILE" \
+                        ps
+
+                    docker compose \
+                        -f "$COMPOSE_FILE" \
+                        logs \
+                        --tail=200
+
+                    exit 1
+                '''
+            }
+        }
+
+        stage('Database Migration') {
+            steps {
+                sh '''
+                    set -e
+
+                    docker compose \
+                        -f "$COMPOSE_FILE" \
+                        exec -T "$API_SERVICE" \
+                        php artisan migrate --force
+                '''
+            }
+        }
+
+        stage('Reference Data') {
+            steps {
+                sh '''
+                    set -e
+
+                    docker compose \
+                        -f "$COMPOSE_FILE" \
+                        exec -T "$API_SERVICE" \
+                        php artisan db:seed \
+                        --class=ProductionReferenceSeeder \
+                        --force
+                '''
+            }
+        }
+
+        stage('Laravel Optimize') {
+            steps {
+                sh '''
+                    set -e
+
+                    docker compose \
+                        -f "$COMPOSE_FILE" \
+                        exec -T "$API_SERVICE" \
+                        php artisan config:cache
+
+                    docker compose \
+                        -f "$COMPOSE_FILE" \
+                        exec -T "$API_SERVICE" \
+                        php artisan route:cache
+
+                    docker compose \
+                        -f "$COMPOSE_FILE" \
+                        exec -T "$API_SERVICE" \
+                        php artisan view:cache
+
+                    docker compose \
+                        -f "$COMPOSE_FILE" \
+                        exec -T "$API_SERVICE" \
+                        php artisan storage:link || true
+                '''
+            }
+        }
+
+        stage('Local Health Check') {
+            steps {
+                sh '''
+                    set -e
+
+                    RESPONSE=$(curl \
+                        --fail \
+                        --silent \
+                        --show-error \
+                        "$LOCAL_API_URL")
+
+                    echo "$RESPONSE"
+
+                    echo "$RESPONSE" | \
+                        grep -q '"status":"online"'
+
+                    echo "Local PASS API health check passed."
+                '''
+            }
+        }
+
+        stage('Public Health Check') {
+            steps {
+                sh '''
+                    set -e
+
+                    RESPONSE=$(curl \
+                        --fail \
+                        --silent \
+                        --show-error \
+                        "$PUBLIC_API_URL")
+
+                    echo "$RESPONSE"
+
+                    echo "$RESPONSE" | \
+                        grep -q '"status":"online"'
+
+                    echo "Public PASS API health check passed."
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'PASS UAT deployment successful.'
+        }
+
+        failure {
+            sh '''
+                echo "PASS UAT deployment failed."
+
+                if [ -f "$COMPOSE_FILE" ] && [ -f .env.uat ]; then
+                    echo
+                    echo "Container status:"
+                    docker compose \
+                        -f "$COMPOSE_FILE" \
+                        ps || true
+
+                    echo
+                    echo "PASS API logs:"
+                    docker compose \
+                        -f "$COMPOSE_FILE" \
+                        logs \
+                        --tail=200 \
+                        pass-api || true
+
+                    echo
+                    echo "PASS MySQL logs:"
+                    docker compose \
+                        -f "$COMPOSE_FILE" \
+                        logs \
+                        --tail=100 \
+                        pass-mysql || true
+                fi
+            '''
+        }
+
+        cleanup {
+            sh '''
+                rm -f .env.uat || true
+                rm -f /tmp/pass-health.json || true
+            '''
+        }
+    }
+}

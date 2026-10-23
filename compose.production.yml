@@ -41,11 +41,8 @@ services:
     command:
       - --log-bin-trust-function-creators=1
 
-    environment:
-      MYSQL_DATABASE: pass_db
-      MYSQL_USER: pass_user
-      MYSQL_PASSWORD: pass_password
-      MYSQL_ROOT_PASSWORD: pass_password
+    env_file:
+      - .env.uat
 
     volumes:
       - pass_mysql_data:/var/lib/mysql
