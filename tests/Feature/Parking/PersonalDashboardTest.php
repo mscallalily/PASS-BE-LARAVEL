@@ -62,7 +62,8 @@ class PersonalDashboardTest extends ParkingTestCase
         $mine = $this->campusVehicle(); Sanctum::actingAs($mine['user']);
         DB::table('vehicle_authorizations')->where('vehicle_id', $mine['vehicle_id'])->update(['valid_until' => now()->subDay()->toDateString()]);
         $this->getJson('/api/dashboard/mine')->assertOk()->assertJsonPath('selected_vehicle.authorization_status', 'expired');
-        DB::table('vehicle_authorizations')->where('vehicle_id', $mine['vehicle_id'])->update(['valid_from' => now()->addDay()->toDateString(), 'valid_until' => now()->addYear()->toDateString()]);
+        // Campus (Manila) "tomorrow", matching the dashboard's campus date regardless of the UTC time of day.
+        DB::table('vehicle_authorizations')->where('vehicle_id', $mine['vehicle_id'])->update(['valid_from' => \App\Support\CampusTime::now()->addDay()->toDateString(), 'valid_until' => now()->addYear()->toDateString()]);
         $this->getJson('/api/dashboard/mine')->assertOk()->assertJsonPath('selected_vehicle.authorization_status', 'scheduled');
     }
 

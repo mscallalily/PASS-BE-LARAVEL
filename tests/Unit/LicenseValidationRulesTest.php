@@ -154,9 +154,12 @@ class LicenseValidationRulesTest extends TestCase
     {
         $result = $this->evaluate(['text' => 'Nee Fe See mite Ne DELA CRUZ', 'confidence' => 40.0, 'sharpness' => 12.0]);
 
+        // A low sharpness score explains the unreadable text; it is no longer
+        // a rejection on its own (see LicenseFieldConfidenceTest).
         $this->assertSame('needs_correction', $result['decision']);
-        $this->assertSame('fail', $result['checks']['image_quality']['result']);
-        $this->assertStringContainsString('blurry', $result['reasons'][0]);
+        $this->assertSame('uncertain', $result['checks']['image_quality']['result']);
+        $this->assertStringContainsString('out of focus', $result['reasons'][0]);
+        $this->assertStringNotContainsString('headings', implode("\n", $result['reasons']));
     }
 
     public function test_blurry_image_with_unreadable_number_is_returned_even_if_dates_read(): void
@@ -164,7 +167,7 @@ class LicenseValidationRulesTest extends TestCase
         $result = $this->evaluate(['text' => "DELA CRUZ, JUAN\n7NO1 23.4567\n2030/05/14", 'confidence' => 60.0, 'sharpness' => 4.0]);
 
         $this->assertSame('needs_correction', $result['decision']);
-        $this->assertSame('fail', $result['checks']['image_quality']['result']);
+        $this->assertNotSame('pass', $result['checks']['image_quality']['result']);
     }
 
     public function test_blurry_image_with_readable_number_requires_correction(): void
@@ -172,7 +175,7 @@ class LicenseValidationRulesTest extends TestCase
         $result = $this->evaluate(['text' => "DELA CRUZ, JUAN\nN01-23-456789\n2030/05/14", 'confidence' => 75.0, 'sharpness' => 7.0]);
 
         $this->assertSame('needs_correction', $result['decision']);
-        $this->assertSame('fail', $result['checks']['image_quality']['result']);
+        $this->assertNotSame('pass', $result['checks']['image_quality']['result']);
     }
 
     public function test_first_character_digit_misread_is_corrected(): void

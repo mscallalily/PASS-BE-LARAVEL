@@ -318,6 +318,37 @@ class GuestAccountTest extends ParkingTestCase
         $this->assertSame('pending', $this->getJson('/api/guest/requests')->json('data.0.request_status'));
     }
 
+    public function test_guest_visit_approval_stays_manual_and_non_guest_automation_never_touches_it(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        $guest = $this->guest();
+        $vehicle = $this->guestVehicle();
+        $id = $this->requestFuture($vehicle);
+
+        // No automatic license or OR/CR check runs for guests, and no vehicle authorization is created.
+        \Illuminate\Support\Facades\Queue::assertNotPushed(\App\Jobs\ProcessVehicleDocumentCheck::class);
+        \Illuminate\Support\Facades\Queue::assertNotPushed(\App\Jobs\ProcessLicenseVerification::class);
+        $this->assertFalse(DB::table('vehicle_authorizations')->where('vehicle_id', $vehicle)->exists());
+        $this->assertSame('pending', DB::table('visitor_requests')->where('request_id', $id)->value('request_status'));
+        // Guests cannot use the campus document reader or campus vehicle registration.
+        $this->postJson('/api/documents/autofill', ['document_type' => 'vehicle_cr'])->assertForbidden();
+        $this->postJson('/api/vehicles', [])->assertForbidden();
+
+        // Parking Staff still cannot decide; only an Administrator can, manually.
+        Sanctum::actingAs($this->user('security'));
+        $this->postJson("/api/visitors/requests/{$id}/approve", ['documents_reviewed' => true])->assertForbidden();
+        $this->assertSame('pending', DB::table('visitor_requests')->where('request_id', $id)->value('request_status'));
+
+        // Archiving and restoring the guest account never approves the request or issues a pass.
+        $admin = $this->user('admin');
+        DB::table('user_roles')->insert(['user_id' => $admin->user_id, 'role_id' => DB::table('roles')->where('role_code', 'admin')->value('role_id'), 'assigned_at' => now()]);
+        Sanctum::actingAs($admin);
+        $this->postJson("/api/admin/record-archives/users/{$guest->user_id}/archive", ['reason' => 'Guest archived for testing.'])->assertOk();
+        $this->postJson("/api/admin/record-archives/users/{$guest->user_id}/restore", ['reason' => 'Guest restored for testing.'])->assertOk()->assertJsonPath('status', 'active');
+        $this->assertNotSame('approved', DB::table('visitor_requests')->where('request_id', $id)->value('request_status'));
+        $this->assertFalse(DB::table('qr_passes')->where('request_id', $id)->exists());
+    }
+
     public function test_full_flow_admin_approval_pass_entry_and_exit(): void
     {
         $guest = $this->guest();

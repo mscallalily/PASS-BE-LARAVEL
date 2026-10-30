@@ -7,7 +7,7 @@ use App\Support\CampusTime;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
-/** Validate submission eligibility. Vehicle approval always requires a staff decision. */
+/** Validate submission eligibility. Campus vehicle approval is decided by the automatic OR/CR check (ProcessVehicleDocumentCheck). */
 class VehicleRegistrationPolicy
 {
     public function validatePlate(string $plate): void
@@ -37,20 +37,27 @@ class VehicleRegistrationPolicy
         return $driver;
     }
 
-    public function authorization(int $vehicleId, int $areaId, int $userId, ?string $ip): void
+    /**
+     * Append a pending authorization. With a run ID the automatic OR/CR check starts
+     * for it; without one (no OR/CR on file) the owner must upload the documents.
+     */
+    public function authorization(int $vehicleId, int $areaId, int $userId, ?string $ip, ?string $runId = null): int
     {
         $at = now();
         $id = DB::table('vehicle_authorizations')->insertGetId([
             'vehicle_id' => $vehicleId, 'parking_area_id' => $areaId, 'authorization_status' => 'pending',
+            'document_check_status' => $runId ? 'processing' : 'needs_correction', 'document_check_run_id' => $runId,
             'valid_from' => CampusTime::date(), 'requested_at' => $at, 'reviewed_at' => null, 'reviewed_by' => null,
-            'remarks' => 'Waiting for PASS staff to review the vehicle details and photo. Vehicle approval and RFID assignment remain separate.',
+            'remarks' => $runId ? 'The automatic OR/CR document check is in progress. Vehicle approval and RFID assignment remain separate.'
+                : 'Upload the Official Receipt (OR) and Certificate of Registration (CR) to start the automatic check.',
             'created_at' => $at, 'updated_at' => $at,
         ], 'authorization_id');
         DB::table('audit_logs')->insert([
             'user_id' => $userId, 'actor_label' => 'Vehicle owner', 'action' => 'vehicle_registration_submitted',
             'auditable_type' => 'vehicle_authorizations', 'auditable_id' => $id, 'ip_address' => $ip,
             'new_values' => json_encode(['authorization_status' => 'pending', 'vehicle_id' => $vehicleId, 'parking_area_id' => $areaId,
-                'basis' => 'staff_review_required', 'plate_verified' => false, 'photo_verified' => false, 'ownership_verified' => false, 'authenticity_verified' => false]), 'created_at' => $at,
+                'basis' => 'automatic_document_check', 'plate_verified' => false, 'photo_verified' => false, 'ownership_verified' => false, 'authenticity_verified' => false]), 'created_at' => $at,
         ]);
+        return $id;
     }
 }

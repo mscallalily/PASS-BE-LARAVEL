@@ -474,6 +474,11 @@ class ParkingAccessService
 
             $id['assignment'] = $assignment;
 
+            // An inventory sticker works only after Admin confirmed the physical hand-over.
+            if (($tag->inventory_registered_at ?? null) && !$assignment->issued_at) {
+                return ['error' => 'RFID sticker has not been issued yet. Admin must confirm the hand-over first.'] + $id;
+            }
+
             if ($assignment->valid_until && $assignment->valid_until < CampusTime::date()) {
                 return ['error' => 'RFID assignment has expired.'] + $id;
             }
@@ -556,7 +561,7 @@ class ParkingAccessService
             }
 
             $authorizationProblem = match (true) {
-                $authorization->authorization_status === 'pending' => 'Vehicle authorization is pending review.',
+                $authorization->authorization_status === 'pending' => 'Vehicle authorization is not approved yet. Complete the OR/CR document check in My Vehicles.',
                 $authorization->authorization_status === 'suspended' => 'Vehicle authorization is suspended.',
                 $authorization->authorization_status === 'rejected' => 'Vehicle authorization was rejected.',
                 $authorization->authorization_status === 'revoked' => 'Vehicle authorization was revoked.',

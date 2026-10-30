@@ -38,11 +38,14 @@ class UserManagementController extends Controller
             ], 403);
         }
 
-        $filters = $request->validate(['role' => ['nullable', 'in:admin,parking_staff,student,faculty,employee,guest'], 'page' => ['nullable', 'integer', 'min:1'], 'search' => ['nullable', 'string', 'max:100']]);
+        $filters = $request->validate(['role' => ['nullable', 'in:admin,parking_staff,student,faculty,employee,guest'], 'page' => ['nullable', 'integer', 'min:1'], 'search' => ['nullable', 'string', 'max:100'],
+            'archive' => ['nullable', 'in:active,archived']]);
         $query = User::with([
             'profile.department',
             'roles',
         ]);
+        // Archived accounts are soft-deleted; they are listed only when requested.
+        if (($filters['archive'] ?? 'active') === 'archived') $query->onlyTrashed();
 
         if ($role = $filters['role'] ?? null) {
             $codes = match ($role) { 'admin' => ['admin', 'parking_admin'], 'parking_staff' => ['security', 'parking_staff'], default => [$role] };
@@ -101,6 +104,7 @@ class UserManagementController extends Controller
                 'contact' => $profile?->contact_number,
                 'status' => $user->account_status,
                 'registered' => $user->created_at,
+                'archivedAt' => $user->deleted_at,
             ];
         });
 
