@@ -12,6 +12,20 @@ const dateFormat = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', m
 const field = $('epc');
 let csrf = '', armed = false, direction = 'in', uncertain = false, changing = false, focusVersion = 0;
 
+// PASS_AUTOMATIC_BARRIER_V3: approved opens are delivered by PASS to the gate PC.
+const hardwarePanel = document.createElement('section');
+hardwarePanel.className = 'notice';
+hardwarePanel.innerHTML = '<strong>Parking station</strong><p id="hardware-status" role="status">Approved entries send assigned parking guidance to the OLED when the parking station is online. Servo disconnected.</p>';
+$('message').insertAdjacentElement('afterend', hardwarePanel);
+function showBarrierRequest(result, mode) {
+  if (!((mode === 'in' && result.status === 'granted') || (mode === 'out' && result.status === 'completed'))) return;
+  // PASS_PARKING_STATION_V1
+  if (result.barrier_status === 'unavailable') { $('hardware-status').textContent = 'Recorded in PASS. Servo disconnected; the parking station handles OLED guidance and the slot sensor.'; return; }
+  $('hardware-status').textContent = result.barrier_status === 'pending'
+    ? 'Recorded in PASS. Automatic opening requested from the gate PC; check the physical barrier.'
+    : 'Recorded in PASS. Barrier opening was not queued; check the gate controller.';
+}
+
 function message(text, tone = '') { $('message').textContent = text; $('message').className = `notice ${tone}`; }
 function render() {
   $('state').querySelector('span').textContent = armed ? `${direction === 'in' ? 'Entry' : 'Exit'} · Listening` : 'Paused';
@@ -152,6 +166,7 @@ field.addEventListener('keydown', async event => {
     const view = ['granted', 'completed'].includes(result.status) ? result.status : ['denied', 'full'].includes(result.status) ? 'denied' : 'notice';
     show(view, { result, tag: frame.tag, mode: scanMode, at });
     message(result.message || result.reason || result.status, ['granted', 'completed'].includes(result.status) ? 'success' : ['denied', 'full'].includes(result.status) ? 'danger' : '');
+    showBarrierRequest(result, scanMode);
   } catch (e) {
     armed = false; uncertain = true; $('reviewed').checked = false;
     show('uncertain', { tag: frame.tag, mode: scanMode });

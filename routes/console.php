@@ -10,3 +10,6 @@ Artisan::command('inspire', function () {
 
 // Remove expired Sanctum login tokens (see config/sanctum.php expiration).
 Schedule::command('sanctum:prune-expired --hours=24')->daily();
+
+// Expired drafts include private pre-registration OCR evidence.
+Schedule::command('registration:prune')->hourly();

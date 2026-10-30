@@ -24,6 +24,7 @@ class InstitutionalIdReader
             'confidence' => $full['confidence'], 'width' => $full['width'], 'height' => $full['height'], 'sharpness' => $full['sharpness'],
             'school_marker' => InstitutionalIdSignals::school($full['text'] ?? ''),
             'fields' => [], 'field_confidence' => [], 'field_conflicts' => [],
+            'profile_fields' => InstitutionalProfileFields::read($full, $category),
         ];
         if (! $full['engine_available']) {
             return $evidence;

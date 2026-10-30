@@ -23,6 +23,7 @@ class ShsIdReader
             'confidence' => $full['confidence'], 'school_marker' => InstitutionalIdSignals::school($full['text'] ?? ''),
             'shs_marker' => self::hasShsText($full['text'] ?? ''),
             'fields' => [], 'field_confidence' => [], 'field_conflicts' => [],
+            'profile_fields' => InstitutionalProfileFields::read($full, 'shs'),
         ];
         if (! $full['engine_available']) return $evidence;
         $image = @imagecreatefromstring((string) file_get_contents($path));

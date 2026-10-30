@@ -25,11 +25,38 @@ use App\Http\Controllers\Api\ParkingSlotSimulationController;
 
 
 
+// PASS_SHARED_HARDWARE_V2
+Route::post('/devices/barrier/verify', [\App\Http\Controllers\Api\BarrierHardwareController::class, 'verify'])->middleware('throttle:120,1,barrier-hardware:');
+// PASS_AUTOMATIC_BARRIER_V3
+Route::post('/devices/barrier/commands/claim', [\App\Http\Controllers\Api\BarrierHardwareController::class, 'claim'])->middleware('throttle:240,1,barrier-queue:');
+Route::post('/devices/barrier/commands/{id}/ack', [\App\Http\Controllers\Api\BarrierHardwareController::class, 'acknowledge'])->whereNumber('id')->middleware('throttle:240,1,barrier-queue:');
+
 Route::get('/departments', [DepartmentController::class, 'index']);
 
 Route::get('/registration/options', [\App\Http\Controllers\Api\RegistrationIdController::class, 'options']);
 Route::post('/registration/id-check', [\App\Http\Controllers\Api\RegistrationIdController::class, 'check'])->middleware('throttle:registration-id-read');
+Route::post('/registration/institutional-id', [\App\Http\Controllers\Api\RegistrationIdController::class, 'autofill'])->middleware('throttle:registration-id-read');
 Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:regular-registration');
+
+// Institutional email + read-only license OCR registration (web and native).
+Route::get('/registration/capture-page', [\App\Http\Controllers\Api\RegistrationSessionController::class, 'capturePage']);
+Route::post('/registration/sessions', [\App\Http\Controllers\Api\RegistrationSessionController::class, 'start'])->middleware('throttle:registration-start');
+Route::prefix('registration/sessions/{id}')->whereUuid('id')->group(function () {
+    $c = \App\Http\Controllers\Api\RegistrationSessionController::class;
+    Route::get('/', [$c, 'status'])->middleware('throttle:60,1,registration-poll:');
+    Route::post('/code', [$c, 'resend'])->middleware('throttle:5,1,registration-code:');
+    Route::post('/verify', [$c, 'verify'])->middleware('throttle:10,1,registration-verify:');
+    Route::post('/license', [$c, 'upload'])->middleware('throttle:registration-license');
+    Route::post('/handoff', [$c, 'handoff'])->middleware('throttle:10,1,registration-handoff:');
+    Route::delete('/handoff', [$c, 'revokeHandoff'])->middleware('throttle:10,1,registration-handoff-cancel:');
+    Route::delete('/', [$c, 'cancel'])->middleware('throttle:10,1,registration-cancel:');
+});
+Route::prefix('registration/capture/{id}')->whereUuid('id')->group(function () {
+    $c = \App\Http\Controllers\Api\RegistrationSessionController::class;
+    Route::get('/', [$c, 'captureStatus'])->middleware('throttle:30,1,registration-capture-poll:');
+    Route::post('/license', [$c, 'captureUpload'])->middleware('throttle:registration-license');
+});
+
 
 // Guest (visitor) self-registration.
 Route::post('/guest/register', [GuestAccountController::class, 'register'])
@@ -102,6 +129,7 @@ Route::post(
     Route::get('/sync/revision', [SyncController::class, 'revision'])->middleware('throttle:120,1,api-action-9:');
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/parking/dashboard', [ParkingDashboardController::class, 'index']);
+    Route::get('/parking/barrier-commands/{id}', [\App\Http\Controllers\Api\BarrierHardwareController::class, 'status'])->whereNumber('id');
     Route::get('/dashboard/mine', [\App\Http\Controllers\Api\UserDashboardController::class, 'show']);
     Route::get('/vehicles/authorizations', [VehicleAuthorizationController::class, 'index']);
     Route::get('/vehicles/my-authorizations', [VehicleAuthorizationController::class, 'mine']);
@@ -134,8 +162,8 @@ Route::post(
         Route::get('/history', [ParkingOperationsController::class, 'history']);
         Route::get('/transactions', [ParkingOperationsController::class, 'transactions']);
         Route::post('/transactions/{id}/observed-slot', [ParkingOperationsController::class, 'observedSlot'])->whereNumber('id');
-        Route::post('/entry', [ParkingOperationsController::class, 'entry']);
-        Route::post('/exit', [ParkingOperationsController::class, 'exit']);
+        Route::post('/entry', [ParkingOperationsController::class, 'entry'])->middleware(\App\Http\Middleware\StaffBarrierReceipt::class);
+        Route::post('/exit', [ParkingOperationsController::class, 'exit'])->middleware(\App\Http\Middleware\StaffBarrierReceipt::class);
     });
 
     // Gate access records (read-only) and RFID credentials.
@@ -165,7 +193,7 @@ Route::post(
 
     Route::get('/vehicle-releases', [\App\Http\Controllers\Api\VehicleReleaseController::class, 'index']);
     Route::post('/vehicle-releases', [\App\Http\Controllers\Api\VehicleReleaseController::class, 'store'])->middleware('throttle:10,1,vehicle-release:');
-    Route::post('/vehicle-releases/{id}/action', [\App\Http\Controllers\Api\VehicleReleaseController::class, 'act'])->whereNumber('id');
+    Route::post('/vehicle-releases/{id}/action', [\App\Http\Controllers\Api\VehicleReleaseController::class, 'act'])->whereNumber('id')->middleware(\App\Http\Middleware\StaffBarrierReceipt::class);
 
     // Guest (visitor) account: own profile, vehicles, requests, passes and visits only.
     Route::prefix('guest')->group(function () {
@@ -232,3 +260,6 @@ Route::post(
 
 // PASS_PRIVILEGED_ACCOUNT_SETUP
 require __DIR__.'/privileged_accounts.php';
+
+// PASS_PARKING_STATION_V1
+require __DIR__.'/parking_station.php';

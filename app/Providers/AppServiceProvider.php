@@ -32,6 +32,8 @@ class AppServiceProvider extends ServiceProvider
             return $origin.'/reset-password?'.http_build_query(['token' => $token, 'email' => $user->getEmailForPasswordReset()]);
         });
         RateLimiter::for('registration-id-read', fn ($request) => Limit::perMinute($request->filled('id_check_receipt') ? 30 : 6)->by(($request->filled('id_check_receipt') ? 'id-evaluate:' : 'id-read:').$request->ip()));
+        RateLimiter::for('registration-start', fn ($request) => [Limit::perMinute(5)->by('registration-start:'.$request->ip()), Limit::perHour(5)->by('registration-email:'.hash('sha256', strtolower(trim((string) $request->input('email')))))]);
+        RateLimiter::for('registration-license', fn ($request) => Limit::perMinute(6)->by('registration-license:'.$request->route('id')));
         RateLimiter::for('regular-registration', fn ($request) => Limit::perMinute(5)->by('regular-register:'.$request->ip()));
         foreach (['license-submit' => 10, 'license-recheck' => 10, 'vehicle-plate-submit' => 6] as $name => $maximum) {
             RateLimiter::for($name, fn ($request) => Limit::perMinute($maximum)

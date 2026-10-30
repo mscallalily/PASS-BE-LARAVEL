@@ -12,6 +12,24 @@ use Illuminate\Validation\Rule;
 
 class RegistrationIdController extends Controller
 {
+    public function autofill(Request $request, InstitutionalIdReader $reader, InstitutionalIdReceipt $receipts, \App\Services\Registration\InstitutionalIdAutofill $autofill)
+    {
+        $data = $request->validate([
+            'registration_category' => ['required', Rule::in(InstitutionalIdRules::CATEGORIES)],
+            'school_id_file' => ['required', 'file', 'mimes:jpg,jpeg,png', 'mimetypes:image/jpeg,image/png', 'max:5120'],
+            'first_name' => ['prohibited'], 'last_name' => ['prohibited'], 'user_code' => ['prohibited'],
+            'middle_name' => ['prohibited'], 'middle_initial' => ['prohibited'], 'suffix' => ['prohibited'],
+        ]);
+        $file = $request->file('school_id_file'); $size = @getimagesize($file->getRealPath());
+        if (!$size || $size[0] * $size[1] > 20000000 || max($size[0], $size[1]) > 12000) throw \Illuminate\Validation\ValidationException::withMessages(['school_id_file' => 'Use a JPG/PNG photo of at most 20 megapixels and 5 MB.']);
+        try { $evidence = $reader->read($file->getRealPath(), $file->getMimeType(), $data['registration_category']); }
+        catch (\Throwable $error) { report($error); $evidence = ['kind' => 'image', 'engine_available' => false, 'fields' => []]; }
+        $result = $autofill->evaluate($data['registration_category'], $evidence);
+        unset($result['evidence'], $result['policy_version']);
+        $result['receipt'] = $result['status'] === 'passed' ? $receipts->issue($file, $data['registration_category'], $evidence) : null;
+        return response()->json(['data' => $result])->header('Cache-Control', 'no-store, private');
+    }
+
     public function options()
     {
         return response()->json(['current_year' => CampusTime::now()->year,

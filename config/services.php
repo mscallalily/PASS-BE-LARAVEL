@@ -15,7 +15,7 @@ return [
     */
 
     // Driver's license document checks. OCR is preliminary only: there is no
-    // official LTO verification service integrated, so staff confirm authenticity.
+    // official LTO verification service integrated. Passing means document consistency only.
     'license_ocr' => [
         'tesseract_path' => env('TESSERACT_PATH', 'tesseract'),
         'pdftotext_path' => env('PDFTOTEXT_PATH', 'pdftotext'),

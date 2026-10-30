@@ -64,6 +64,30 @@ final class LicenseFieldConfidence
         return $dates;
     }
 
+    /** Birth-date evidence is restricted to its own labeled block. */
+    public static function birthReadings(array $read): array
+    {
+        $dates = [];
+        foreach (self::near(self::lines($read), '/DATE\s+OF\s+BIRTH|\bBIRTH\s*DATE\b/', '/LICEN[CSG]E\s*(?:NO|NUMBER)|EXPIRATION|EXPIRY|ADDRESS/') as $line) {
+            foreach (self::spans($line) as [$text, $confidence]) {
+                $date = self::date($text);
+                if ($date !== null) $dates[] = ['value' => $date, 'confidence' => $confidence];
+            }
+        }
+        return $dates;
+    }
+
+    /** Preserve the actual complete name, rather than populating it from form inputs. */
+    public static function printedNameReadings(array $read): array
+    {
+        $words = [];
+        foreach (self::near(self::lines($read), '/(?:LAST|FIRST|FULL)\s*NAME/', '/NATIONALITY|DATE OF BIRTH|LICENSE NO|EXPIRATION|\bSEX\b|ADDRESS/') as $line) {
+            if (preg_match('/(?:LAST|FIRST|FULL)\s*NAME/', self::normalize(self::text($line)))) continue;
+            foreach ($line as $word) if (preg_match('/\pL/u', $word['text'])) $words[] = $word;
+        }
+        return $words ? [['value' => self::text($words), 'confidence' => min(array_column($words, 'confidence'))]] : [];
+    }
+
     public static function readTexts(array $document): array
     {
         return array_values(array_map(fn ($read) => $read['text'], array_filter(

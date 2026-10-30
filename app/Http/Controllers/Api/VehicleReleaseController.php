@@ -109,7 +109,13 @@ class VehicleReleaseController extends Controller
             DB::table('vehicle_release_requests')->where('release_id', $id)->update($update);
             $this->audit($request, $id, 'vehicle_release_'.$action);
             ParkingNotifier::notifyUser($row->owner_user_id, 'vehicle_release_updated', 'Vehicle release update', 'Emergency vehicle release request #'.$id.' is '.$update['status'].'.', 'vehicle_release_requests', $id);
-            return response()->json(['message' => $action === 'release' ? 'Vehicle exit recorded under the owner-authorized substitute driver. Slot released.' : 'Release request '.$update['status'].'.']);
+            // PASS_STAFF_BARRIER_V1: returned only after the authorized exit and audit have succeeded.
+            return response()->json([
+                'message' => $action === 'release' ? 'Vehicle exit recorded under the owner-authorized substitute driver. Slot released.' : 'Release request '.$update['status'].'.',
+                'status' => $action === 'release' ? 'completed' : $update['status'],
+                'gate_action' => $action === 'release' ? 'open' : null,
+                'release_id' => $id,
+            ]);
         }, 3);
     }
 

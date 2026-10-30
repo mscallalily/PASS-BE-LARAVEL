@@ -19,17 +19,19 @@ final class RecordArchiveController extends Controller
         if ($entity === 'users') {
             $q = DB::table('users as u')->leftJoin('user_profiles as p', 'p.user_id', '=', 'u.user_id')
                 ->selectRaw("u.user_id as id, u.user_code as identifier, u.email, u.account_status as status, TRIM(CONCAT_WS(' ', p.first_name, p.last_name, p.suffix)) as name, u.deleted_at as archived_at");
-            $q->whereNull('u.deleted_at', 'and', $archived);
             if (!empty($d['search'])) $q->where(function ($q) use ($d) { foreach (['u.user_code', 'u.email', 'p.first_name', 'p.last_name'] as $c) $q->orWhere($c, 'like', '%'.$d['search'].'%'); });
-            $q->orderByDesc('u.user_id');
+            $column = 'u.deleted_at'; $order = 'u.user_id';
         } else {
             $q = DB::table('vehicles as v')->leftJoin('users as u', 'u.user_id', '=', 'v.owner_user_id')
-                ->selectRaw("v.vehicle_id as id, v.plate_number as identifier, u.user_code as owner, TRIM(CONCAT_WS(' ', v.make, v.model)) as name, v.registration_status as status, v.deleted_at as archived_at");
-            $q->whereNull('v.deleted_at', 'and', $archived);
-            if (!empty($d['search'])) $q->where(fn ($q) => $q->where('v.plate_number', 'like', '%'.$d['search'].'%')->orWhere('u.user_code', 'like', '%'.$d['search'].'%'));
-            $q->orderByDesc('v.vehicle_id');
+                ->leftJoin('user_profiles as p', 'p.user_id', '=', 'u.user_id')
+                ->leftJoin('visitors as visitor', 'visitor.visitor_id', '=', 'v.owner_visitor_id')
+                ->selectRaw("v.vehicle_id as id, v.plate_number as identifier, u.user_code as owner_code, COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p.first_name, p.last_name)), ''), NULLIF(TRIM(CONCAT_WS(' ', visitor.first_name, visitor.last_name)), ''), u.user_code) as owner, TRIM(CONCAT_WS(' ', v.make, v.model)) as name, v.registration_status as status, v.deleted_at as archived_at");
+            if (!empty($d['search'])) $q->where(function ($q) use ($d) { foreach (['v.plate_number', 'u.user_code', 'p.first_name', 'p.last_name', 'visitor.first_name', 'visitor.last_name'] as $c) $q->orWhere($c, 'like', '%'.$d['search'].'%'); });
+            $column = 'v.deleted_at'; $order = 'v.vehicle_id';
         }
-        return response()->json($q->paginate(20))->header('Cache-Control', 'private, no-store');
+        $summary = ['active' => (clone $q)->whereNull($column)->count(), 'archived' => (clone $q)->whereNotNull($column)->count()];
+        $q->whereNull($column, 'and', $archived)->orderByDesc($order);
+        return response()->json($q->paginate(20)->toArray() + ['summary' => $summary])->header('Cache-Control', 'private, no-store');
     }
 
     public function change(Request $r, string $entity, int $id, string $action)

@@ -12,7 +12,7 @@ ini_set('display_errors', '0');
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
-header("Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
+header("Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
 function reply(int $code, array $data): never { http_response_code($code); header('Content-Type: application/json; charset=utf-8'); echo json_encode($data, JSON_THROW_ON_ERROR); exit; }
 
 if (PHP_SAPI !== 'cli-server' || ($_SERVER['HTTP_HOST'] ?? '') !== '127.0.0.1:8787'
@@ -26,7 +26,7 @@ if ($path === '/branding/pass-logo.png' && $method === 'GET') {
     if (is_file($logo) && !is_link($logo)) { header('Content-Type: image/png'); readfile($logo); exit; }
     reply(404, ['message' => 'PASS logo is unavailable.']);
 }
-$assets = ['/' => ['bridge.html', 'text/html'], '/bridge.css' => ['bridge.css', 'text/css'], '/bridge.js' => ['bridge.js', 'text/javascript'], '/scan-core.js' => ['scan-core.js', 'text/javascript']];
+$assets = ['/' => ['bridge.html', 'text/html'], '/bridge.css' => ['bridge.css', 'text/css'], '/bridge.js' => ['bridge.js', 'text/javascript'], '/hardware-client.js' => ['hardware-client.js', 'text/javascript'], '/scan-core.js' => ['scan-core.js', 'text/javascript']];
 if (isset($assets[$path]) && $method === 'GET') {
     header('Content-Type: '.$assets[$path][1].'; charset=utf-8'); readfile(__DIR__.'/'.$assets[$path][0]); exit;
 }

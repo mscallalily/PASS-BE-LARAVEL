@@ -59,6 +59,9 @@ class RfidReaderController extends Controller
             ? $this->access->enter($credential, null, $context)
             : $this->access->exit($credential, null, $context);
 
+        // PASS_AUTOMATIC_BARRIER_V3: queue only committed approvals; controller delivery is independent of the browser.
+        try { $result = array_replace($result, \App\Services\Parking\BarrierReceipt::issue($result, $direction, null)); }
+        catch (\Throwable $error) { report($error); $result['barrier_receipt'] = null; $result['barrier_command_id'] = null; $result['barrier_status'] = 'unavailable'; }
         return response()->json($result);
     }
 }

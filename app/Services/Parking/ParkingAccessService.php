@@ -24,8 +24,8 @@ use Illuminate\Support\Str;
  * and the database's unique (slot_id, active_slot_flag) index guarantees no
  * slot is held by two active transactions even if that lock were bypassed.
  *
- * An assignment is not proof of physical location: there is no slot-level
- * sensor, so staff confirm or report the actual slot.
+ * An assignment is not proof of vehicle identity. Fixed sensors report slot
+ * occupancy separately; staff still confirm the actual vehicle.
  */
 class ParkingAccessService
 {
@@ -136,6 +136,7 @@ class ParkingAccessService
             // Repeated gate scans must not create a second stay.
             return [
                 'status' => 'already_inside',
+                'plate_number' => $vehicle->plate_number, // PASS_SHARED_HARDWARE_V2 plate
                 'message' => "{$vehicle->plate_number} is already inside (slot " . ($this->slotCode($active->slot_id) ?? 'none') . ').',
                 'transaction_id' => $active->transaction_id,
             ] + $this->slotInfo($active->slot_id);
@@ -253,7 +254,7 @@ class ParkingAccessService
 
             if (!$transaction) {
                 // A repeated exit scan must not close anything twice.
-                return ['status' => 'not_inside', 'message' => "{$vehicle->plate_number} has no active parking session."];
+                return ['status' => 'not_inside', 'plate_number' => $vehicle->plate_number, 'message' => "{$vehicle->plate_number} has no active parking session."];
             }
 
             $release = DB::table('vehicle_release_requests')->where('transaction_id', $transaction->transaction_id)
@@ -712,6 +713,11 @@ class ParkingAccessService
             ->where('z.parking_area_id', $areaId)
             ->where('z.is_active', true)
             ->where('s.slot_status', 'available')
+            // PASS_PARKING_STATION_V1: assignments and physical availability are separate.
+            ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('parking_slot_stations as ps')
+                ->whereColumn('ps.slot_id', 's.slot_id')
+                ->where(fn ($unavailable) => $unavailable->where('ps.sensor_state', '!=', 'available')
+                    ->orWhereNull('ps.last_seen_at')->orWhere('ps.last_seen_at', '<', now()->subSeconds(12))))
             ->where(fn ($q) => $q->whereNull('z.vehicle_type_id')->orWhere('z.vehicle_type_id', $vehicleTypeId))
             ->where(fn ($q) => $q->whereNull('s.vehicle_type_id')->orWhere('s.vehicle_type_id', $vehicleTypeId))
             ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('parking_transactions as t')

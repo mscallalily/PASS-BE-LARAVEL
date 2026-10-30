@@ -127,7 +127,7 @@ final class ScanTransport
                 throw new RuntimeException('Unexpected PASS response. Check access records before resuming.');
             }
             // Do not expose credentials or unrelated response fields to the local page.
-            return array_intersect_key($result, array_flip(['status', 'message', 'reason', 'plate_number', 'slot_code', 'access_event_id']));
+            return array_intersect_key($result, array_flip(['status', 'message', 'reason', 'plate_number', 'slot_code', 'access_event_id', 'barrier_receipt', 'barrier_command_id', 'barrier_status']));
         } finally { curl_close($ch); }
     }
 }
