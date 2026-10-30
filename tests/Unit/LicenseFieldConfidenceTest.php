@@ -158,7 +158,7 @@ class LicenseFieldConfidenceTest extends TestCase
 
     public function test_better_field_confidence_never_overrides_other_required_checks(): void
     {
-        foreach ([['sharpness' => 59.9], ['width' => 499], ['sharpness' => null], ['confidence' => null], ['kind' => 'pdf']] as $changes) {
+        foreach ([['sharpness' => null], ['confidence' => null], ['kind' => 'pdf']] as $changes) {
             $this->assertNotSame('verified', $this->evaluate($this->document(null, $changes))['decision']);
         }
         $noAgency = str_replace('LAND TRANSPORTATION OFFICE', 'OTHER AGENCY', self::CARD);
@@ -167,6 +167,80 @@ class LicenseFieldConfidenceTest extends TestCase
             $this->assertSame('needs_correction', $this->evaluate($this->document(), $submission)['decision']);
         }
         $this->assertSame('pending_review', $this->evaluate($this->document(null, ['engine_available' => false]))['decision']);
+    }
+
+    public function test_low_quality_score_alone_does_not_reject_reliably_read_fields(): void
+    {
+        foreach ([['sharpness' => 59.9], ['width' => 499]] as $changes) {
+            $result = $this->evaluate($this->document(null, $changes));
+            $this->assertSame('verified', $result['decision'], json_encode($changes));
+            $this->assertSame('pass', $result['checks']['image_quality']['result']);
+            $this->assertStringContainsString('still read', $result['checks']['image_quality']['detail']);
+        }
+        // Readability does not prove validity: mismatches still fail on a low-quality photo.
+        foreach ([['license_number' => 'N01-23-456788'], ['expiry_date' => '2031-05-14'], ['first_name' => 'PEDRO']] as $submission) {
+            $this->assertSame('needs_correction', $this->evaluate($this->document(null, ['sharpness' => 20.0]), $submission)['decision']);
+        }
+    }
+
+    public function test_low_quality_with_unreliable_fields_explains_the_photo_problem(): void
+    {
+        $result = $this->evaluate($this->document([$this->read(['N01-23-456789' => 55.0])], ['sharpness' => 20.0]));
+        $this->assertSame('needs_correction', $result['decision']);
+        $this->assertSame('uncertain', $result['checks']['image_quality']['result']);
+        $reasons = implode("\n", $result['reasons']);
+        $this->assertStringContainsString('out of focus', $reasons);
+        $this->assertStringNotContainsString('could not be read consistently', $reasons);
+    }
+
+    public function test_misread_small_print_labels_still_locate_the_values(): void
+    {
+        // Real card OCR: the labels under the hologram read as "License Na." / "Expirzuon Date".
+        $card = str_replace('License No. Expiration Date', 'License Na. Expirzuon Date', self::CARD);
+        $result = $this->evaluate($this->document([$this->read([], 'full_gray', $card)]));
+        $this->assertSame('verified', $result['decision']);
+        $this->assertSame('pass', $result['checks']['document_type']['result']);
+        $found = LicenseFieldConfidence::extract($this->document([$this->read([], 'full_gray', $card)]));
+        $this->assertSame('N01-23-456789', $found['license_number']['value']);
+        $this->assertTrue($found['license_number']['labeled']);
+        $this->assertSame('2030-05-14', $found['expiry_date']['value']);
+        // The tolerance only locates the field; a different value is still a mismatch.
+        $this->assertSame('needs_correction', $this->evaluate($this->document([$this->read([], 'full_gray', $card)]), ['license_number' => 'N01-23-456788'])['decision']);
+    }
+
+    public function test_label_patterns_do_not_match_titles_or_other_fields(): void
+    {
+        foreach (['LICENSE NO.', 'LICENSE NA.', 'LICENSE NOA.', 'LICENGE NO,', 'LICENSE NUMBER'] as $label) {
+            $this->assertMatchesRegularExpression(LicenseFieldConfidence::NUMBER_LABEL, $label);
+        }
+        foreach (["DRIVER'S LICENSE NON-PROFESSIONAL", 'SIGNATURE OF LICENSEE', 'DATE OF BIRTH'] as $other) {
+            $this->assertDoesNotMatchRegularExpression(LicenseFieldConfidence::NUMBER_LABEL, $other);
+        }
+        foreach (['EXPIRATION DATE', 'EXPIRZUON DATE', 'EXPIRY', 'EXOIRATION DATE'] as $label) {
+            $this->assertMatchesRegularExpression(LicenseFieldConfidence::EXPIRY_LABEL, $label);
+        }
+        $this->assertDoesNotMatchRegularExpression(LicenseFieldConfidence::EXPIRY_LABEL, 'DATE OF BIRTH');
+    }
+
+    public function test_extract_never_invents_values(): void
+    {
+        // No labels: only a printed A00-00-000000 token is offered (marked unlabeled);
+        // a birth date is never used as the expiry, and dates/heights are not joined into a number.
+        $card = "DRIVER'S LICENSE\nPHL M 2004/07/21 35 1.48\nN01-23-456789 2030/05/14 N01";
+        $found = LicenseFieldConfidence::extract($this->document([$this->read([], 'full_gray', $card)]));
+        $this->assertSame('N01-23-456789', $found['license_number']['value']);
+        $this->assertFalse($found['license_number']['labeled']);
+        $this->assertNull($found['expiry_date']);
+        $found = LicenseFieldConfidence::extract($this->document([$this->read([], 'full_gray', "PHL M 2004/07/21 35 1.48\nAddress 215 NIA RD")]));
+        $this->assertSame(['license_number' => null, 'expiry_date' => null], $found);
+    }
+
+    public function test_extract_reports_disagreeing_strong_readings(): void
+    {
+        $other = str_replace('N01-23-456789', 'N01-23-456780', self::CARD);
+        $found = LicenseFieldConfidence::extract($this->document([$this->read(), $this->read([], 'body_gray', $other), $this->read([], 'number_color', 'N01-23-456789')]));
+        $this->assertSame('N01-23-456789', $found['license_number']['value']);
+        $this->assertTrue($found['license_number']['conflict']);
     }
 
     public function test_legacy_unstructured_read_does_not_bypass_the_existing_mean_threshold(): void

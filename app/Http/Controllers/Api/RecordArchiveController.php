@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Support\ActivityAudit;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -40,7 +41,29 @@ final class RecordArchiveController extends Controller
         $reason = trim($r->validate(['reason' => ['required', 'string', 'min:5', 'max:500']])['reason']);
         abort_if(mb_strlen($reason) < 5, 422, 'Enter a reason with at least five characters.');
         $archive = $action === 'archive';
-        DB::transaction(function () use ($r, $entity, $id, $archive, $reason) {
+        try {
+            $restoredStatus = $this->changeLocked($r, $entity, $id, $archive, $reason);
+        } catch (QueryException $exception) {
+            // Identifiers stay unique across archived rows; report a conflict instead of a server error.
+            abort_if(($exception->errorInfo[1] ?? null) === 1062, 409, 'Another record already uses this identifier. Resolve the conflict before restoring.');
+            throw $exception;
+        }
+        if ($archive) {
+            return response()->json(['message' => 'Record archived. Its original identifier, documents and transaction history are retained.', 'archived' => true]);
+        }
+        $message = match ($restoredStatus) {
+            null => 'Vehicle restored with its original identifier. It needs a new automatic OR/CR check before approval; previous RFID and QR credentials remain revoked.',
+            'pending' => 'Account restored with its original identifier. It is pending approval; previous RFID and QR credentials remain revoked.',
+            'active' => 'Account restored with its original identifier and previous status (active). Previous RFID and QR credentials remain revoked.',
+            default => "Account restored with its original identifier and previous status ({$restoredStatus}). Previous RFID and QR credentials remain revoked.",
+        };
+        return response()->json(['message' => $message, 'archived' => false, 'status' => $restoredStatus]);
+    }
+
+    /** Returns the restored account status for users; null for vehicles. */
+    private function changeLocked(Request $r, string $entity, int $id, bool $archive, string $reason): ?string
+    {
+        return DB::transaction(function () use ($r, $entity, $id, $archive, $reason) {
             // All lifecycle changes take the same admin locks to avoid concurrent last-admin removal.
             $admins = DB::table('users')->whereNull('deleted_at')->where('account_status', 'active')
                 ->where(fn ($q) => $q->where('user_type', 'admin')->orWhereExists(fn ($roles) => $roles->selectRaw('1')->from('user_roles as ur')->join('roles as ro', 'ro.role_id', '=', 'ur.role_id')->whereColumn('ur.user_id', 'users.user_id')->whereIn('ro.role_code', ['admin', 'parking_admin'])->where('ro.is_active', true)))
@@ -61,19 +84,51 @@ final class RecordArchiveController extends Controller
                 $this->revokeCredentials($vehicleIds, $entity === 'users' ? $id : null, $reason);
             }
             $values = ['deleted_at' => $archive ? now() : null, 'updated_at' => now()];
-            $values[$entity === 'users' ? 'account_status' : 'registration_status'] = $entity === 'users' ? ($archive ? 'deactivated' : 'pending') : ($archive ? 'archived' : 'registered');
+            $restored = null;
+            if ($entity === 'users') {
+                if ($archive) {
+                    $values += ['account_status' => 'deactivated', 'pre_archive_status' => $target->account_status];
+                } else {
+                    $restored = $this->restoredStatus($target);
+                    $values += ['account_status' => $restored, 'pre_archive_status' => null];
+                }
+            } else {
+                $values['registration_status'] = $archive ? 'archived' : 'registered';
+            }
             DB::table($entity)->where($key, $id)->update($values);
             if ($entity === 'users') DB::table('personal_access_tokens')->where('tokenable_type', User::class)->where('tokenable_id', $id)->delete();
             if (!$archive && $entity === 'vehicles') {
                 $auth = DB::table('vehicle_authorizations')->where('vehicle_id', $id)->orderByDesc('authorization_id')->lockForUpdate()->first();
-                $authorization = ['authorization_status' => 'pending', 'reviewed_by' => null, 'reviewed_at' => null, 'requested_at' => now(), 'remarks' => 'Restored vehicle requires a fresh authorization review.', 'updated_at' => now()];
+                $authorization = ['authorization_status' => 'pending', 'reviewed_by' => null, 'reviewed_at' => null, 'requested_at' => now(), 'document_check_status' => 'needs_correction', 'document_check_run_id' => null, 'approval_source' => null, 'remarks' => 'Restored vehicle needs a new automatic OR/CR check. The owner corrects or re-uploads the registration from My Vehicles.', 'updated_at' => now()];
                 if ($auth) DB::table('vehicle_authorizations')->where('authorization_id', $auth->authorization_id)->update($authorization);
                 else DB::table('vehicle_authorizations')->insert($authorization + ['vehicle_id' => $id, 'created_at' => now()]);
             }
+            $statusChange = $entity === 'users' ? ['account_status' => $values['account_status']] : [];
             ActivityAudit::record($r, $actor, ($entity === 'users' ? 'account_' : 'vehicle_').($archive ? 'archived' : 'restored'), $entity === 'users' ? User::class : \App\Models\Vehicle::class, $id,
-                ['archived' => !$archive], ['archived' => $archive, 'reason' => $reason]);
+                ['archived' => !$archive] + ($entity === 'users' ? ['account_status' => $target->account_status] : []), ['archived' => $archive, 'reason' => $reason] + $statusChange);
+            return $restored;
         }, 3);
-        return response()->json(['message' => $archive ? 'Record archived. Its original identifier, documents and transaction history are retained.' : 'Record restored with its original identifier. Fresh approval is required; previous RFID and QR credentials remain revoked.']);
+    }
+
+    /**
+     * Status after a restore. A suspended, rejected (deactivated) or pending
+     * account returns to that exact status, so a restore never clears it.
+     * A previously active non-guest account keeps the existing rule that a
+     * restored record needs fresh approval. Guest accounts have no account
+     * approval step, so a previously active guest returns to active; guest
+     * visit requests keep their own manual Admin approval. Rows archived
+     * before the status was recorded (NULL) keep the previous behaviour.
+     */
+    private function restoredStatus(object $target): string
+    {
+        $previous = $target->pre_archive_status ?? null;
+        if (in_array($previous, ['suspended', 'deactivated', 'pending'], true)) return $previous;
+        if ($previous === 'active') {
+            $guest = DB::table('user_roles as ur')->join('roles as ro', 'ro.role_id', '=', 'ur.role_id')
+                ->where('ur.user_id', $target->user_id)->where('ro.role_code', 'guest')->exists();
+            return $guest ? 'active' : 'pending';
+        }
+        return 'pending';
     }
 
     private function revokeCredentials(array $vehicles, ?int $userId, string $reason): void

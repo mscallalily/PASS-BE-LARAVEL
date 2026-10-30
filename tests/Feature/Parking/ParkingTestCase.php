@@ -185,4 +185,17 @@ abstract class ParkingTestCase extends TestCase
     {
         return DB::table('parking_transactions')->where('vehicle_id', $vehicleId)->where('transaction_status', 'active')->first();
     }
+
+    /**
+     * For tests about other registration rules: the OR/CR check (which runs
+     * before anything is saved) passes. OR/CR rules have their own tests.
+     */
+    protected function passingDocumentCheck(): void
+    {
+        $this->mock(\App\Services\Vehicles\VehicleDocumentCheck::class)->shouldReceive('run')->andReturn([
+            'decision' => 'passed', 'reasons' => [], 'checks' => [], 'extracted' => [],
+            'policy_version' => \App\Services\Vehicles\VehicleDocumentRules::POLICY_VERSION,
+            'approval_basis' => 'ocr_document_consistency', 'official_verification' => 'not_performed', 'ownership_verified' => false,
+        ]);
+    }
 }

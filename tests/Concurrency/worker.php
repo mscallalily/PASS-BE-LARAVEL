@@ -21,6 +21,8 @@ try {
         $request->setUserResolver(fn()=>App\Models\User::findOrFail($job['actor']));
         $response=app(App\Http\Controllers\Api\RfidAssignmentController::class)->store($request);
         $status=$response->getStatusCode()===201?'assigned':'unexpected';
+    } elseif ($job['action']==='auto-assign') {
+        $status=app(App\Services\Rfid\RfidInventory::class)->assignToVehicle($job['id'])?'assigned':'not_assigned';
     } else {
         $status=app(App\Services\Parking\ParkingAccessService::class)->{$job['action']}($job['data'],null)['status'];
     }

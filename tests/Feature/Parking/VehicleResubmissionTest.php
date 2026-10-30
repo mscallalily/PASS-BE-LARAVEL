@@ -15,7 +15,10 @@ class VehicleResubmissionTest extends ParkingTestCase
     protected function setUp(): void
     {
         parent::setUp(); Storage::fake('private'); Cache::flush();
-        $this->mock(LicenseDocumentReader::class)->shouldNotReceive('read', 'readTextImage');
+        // These tests cover correction history, not OCR: the OR/CR check (run before saving) passes,
+        // and the queued approval does not run, so each submission stays pending and can be corrected again.
+        $this->passingDocumentCheck();
+        \Illuminate\Support\Facades\Queue::fake();
     }
 
     private function rejected(): array
@@ -35,7 +38,8 @@ class VehicleResubmissionTest extends ParkingTestCase
     private function payload(string $plate = 'ABC9876', string $type = 'Motorcycle'): array
     {
         return ['plate_number' => $plate, 'vehicle_type' => $type, 'make' => 'honda', 'model' => 'click',
-            'color' => 'black', 'year_model' => 2025, 'vehicle_photo' => UploadedFile::fake()->image('corrected.png', 1200, 800)];
+            'color' => 'black', 'year_model' => 2025, 'vehicle_photo' => UploadedFile::fake()->image('corrected.png', 1200, 800),
+            'or_document' => UploadedFile::fake()->image('or.jpg', 1600, 1100), 'cr_document' => UploadedFile::fake()->image('cr.jpg', 1600, 1100)];
     }
 
     private function submit(int $id, array $data)
@@ -48,7 +52,7 @@ class VehicleResubmissionTest extends ParkingTestCase
         $car = $this->rejected(); $vehicles = DB::table('vehicles')->count(); $tags = DB::table('rfid_assignments')->count();
         $this->submit($car['vehicle_id'], $this->payload() + ['owner_user_id' => 999, 'authorization_status' => 'rejected'])
             ->assertOk()->assertJsonPath('vehicle_id', $car['vehicle_id'])->assertJsonPath('authorization_status', 'pending')
-            ->assertJsonPath('approval_basis', 'staff_review_required')->assertJsonPath('plate_verified', false)
+            ->assertJsonPath('approval_basis', 'automatic_document_check')->assertJsonPath('plate_verified', false)
             ->assertJsonPath('photo_verified', false)->assertJsonPath('authenticity_verified', false)->assertJsonPath('ownership_verified', false);
         $this->assertDatabaseCount('vehicles', $vehicles);
         $this->assertDatabaseHas('vehicles', ['vehicle_id' => $car['vehicle_id'], 'owner_user_id' => $car['user']->user_id,
@@ -69,7 +73,8 @@ class VehicleResubmissionTest extends ParkingTestCase
         $this->assertStringContainsString($car['plate'], $history->before_values);
         $row = collect($this->getJson('/api/vehicles')->assertOk()->json('vehicles'))->firstWhere('id', (string) $car['vehicle_id']);
         $this->assertSame('pending', $row['authorizationStatus']); $this->assertNull($row['rejectionReason']);
-        $this->assertTrue($row['canResubmit']); $this->assertNull($row['rfid']);
+        // The approval for this correction is still queued: it cannot be corrected again meanwhile.
+        $this->assertFalse($row['canResubmit']); $this->assertNull($row['rfid']);
         foreach (['old_record', 'vehicle_photo_path', 'confidence', 'candidates'] as $key) $this->assertArrayNotHasKey($key, $row);
         $this->getJson('/api/vehicles/my-authorizations')->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.authorization_status', 'pending');
     }
@@ -103,8 +108,9 @@ class VehicleResubmissionTest extends ParkingTestCase
         $car = $this->rejected(); $count = DB::table('vehicle_authorizations')->count();
         $bad = $this->payload('1234567');
         $this->submit($car['vehicle_id'], $bad)->assertUnprocessable()->assertJsonValidationErrors('plate_number');
-        $good = $this->payload(); unset($good['vehicle_photo']);
-        $this->submit($car['vehicle_id'], $good)->assertUnprocessable()->assertJsonValidationErrors('vehicle_photo');
+        // The photo is optional now; an invalid CR still saves nothing and keeps the original photo.
+        $good = $this->payload(); unset($good['vehicle_photo']); $good['cr_document'] = UploadedFile::fake()->create('cr.txt', 10, 'text/plain');
+        $this->submit($car['vehicle_id'], $good)->assertUnprocessable()->assertJsonValidationErrors('cr_document');
         $this->assertDatabaseHas('vehicles', ['vehicle_id' => $car['vehicle_id'], 'plate_number' => $car['plate'], 'vehicle_photo_path' => $car['photo']]);
         $this->assertDatabaseCount('vehicle_authorizations', $count);
         $this->assertSame([$car['photo']], Storage::disk('private')->allFiles());
@@ -184,13 +190,17 @@ class VehicleResubmissionTest extends ParkingTestCase
     public function test_invalid_input_saves_nothing_and_pending_updates_retain_history_without_duplicate_vehicle(): void
     {
         $car = $this->rejected(); $before = DB::table('vehicle_authorizations')->count();
-        $this->submit($car['vehicle_id'], ['plate_number' => '<script>'])->assertUnprocessable()->assertJsonValidationErrors(['plate_number', 'vehicle_type', 'vehicle_photo']);
+        $this->submit($car['vehicle_id'], ['plate_number' => '<script>'])->assertUnprocessable()->assertJsonValidationErrors(['plate_number', 'vehicle_type'])->assertJsonMissingValidationErrors('vehicle_photo');
         $this->assertDatabaseCount('vehicle_authorizations', $before);
         $this->submit($car['vehicle_id'], $this->payload())->assertOk();
+        // The queued approval could not finish (queue failure path): the correction stays pending and can be corrected again.
+        $latest = DB::table('vehicle_authorizations')->where('vehicle_id', $car['vehicle_id'])->orderByDesc('authorization_id')->first();
+        (new \App\Jobs\ProcessVehicleDocumentCheck($latest->authorization_id, $latest->document_check_run_id))->failed(new \RuntimeException('queue down'));
         $this->submit($car['vehicle_id'], $this->payload())->assertOk()->assertJsonPath('authorization_status', 'pending');
         $this->assertSame(1, DB::table('vehicles')->where('vehicle_id', $car['vehicle_id'])->count());
         $this->assertDatabaseCount('vehicle_authorizations', $before + 2);
-        $this->assertCount(3, Storage::disk('private')->allFiles());
+        // Original photo + (photo, OR, CR) for each of the two corrections; earlier files are kept for history.
+        $this->assertCount(7, Storage::disk('private')->allFiles());
     }
 
 }

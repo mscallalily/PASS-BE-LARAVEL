@@ -5,6 +5,70 @@ namespace App\Services\LicenseVerification;
 /** Confidence in printed identity fields, never evidence of issuer authenticity. */
 final class LicenseFieldConfidence
 {
+    /**
+     * Field labels are small print under the card's hologram and are often
+     * misread ("License Na.", "Expirzuon Date") while the large values beside
+     * them read cleanly. The labels only locate a field; its value must still
+     * parse as an LTO number or a calendar date. "LICENSE NON-PROFESSIONAL"
+     * (a title) does not match.
+     */
+    public const NUMBER_LABEL = '/\bL[I1L]C[EA]N[CSGZ]E\s*[.,:]?\s*(?:NUMBER\b|N(?:[O0Q][A.]?|A)(?![A-Z]))/';
+
+    public const EXPIRY_LABEL = '/\bEXPIR|\bEX[A-Z]{3,9}\s?DATE\b/';
+
+    /** Field confidence needed before a read value is treated as reliable. */
+    public const RELIABLE = 80.0;
+
+    /**
+     * What the card says for each form field, for pre-filling the form.
+     * A value is returned only when it was read from the document: a number
+     * under its label (or, failing that, an LTO-format number elsewhere on the
+     * card, marked unlabeled), and an expiry only from the expiration field.
+     *
+     * @return array{license_number: ?array, expiry_date: ?array}
+     *         each: {value, confidence, sources, labeled, conflict}
+     */
+    public static function extract(array $document): array
+    {
+        $reads = $document['field_reads'] ?? [$document + ['source' => 'full_gray']];
+        $numbers = []; $dates = []; $unlabeled = [];
+        foreach ($reads as $read) {
+            $source = $read['source'] ?? 'full_gray';
+            foreach (self::numberReadings($read) as $n) $numbers[] = $n + ['source' => $source];
+            foreach (self::expiryReadings($read) as $d) $dates[] = $d + ['source' => $source];
+            // Without a label, accept only one printed token in the hyphenated
+            // A00-00-000000 shape, never digits joined from dates or heights.
+            foreach (self::lines($read) as $line) foreach ($line as $word) {
+                if (preg_match('/^[A-Z0-9][0-9OILSB]{2}-[0-9OILSB]{2}-[0-9OILSB]{6}$/D', strtoupper(trim($word['text'], '.,:;')))
+                    && ($value = self::number($word['text'])) !== null) {
+                    $unlabeled[] = ['value' => $value, 'confidence' => (float) $word['confidence'], 'source' => $source];
+                }
+            }
+        }
+        $number = self::best($numbers, true) ?? self::best($unlabeled, false);
+        return [
+            'license_number' => $number ? ['value' => LicenseValidationRules::formatLicenseNumber($number['value'])] + $number : null,
+            'expiry_date' => self::best($dates, true),
+        ];
+    }
+
+    /** The value read by the most sources (then most confidently); notes disagreement. */
+    private static function best(array $readings, bool $labeled): ?array
+    {
+        $byValue = [];
+        foreach ($readings as $r) {
+            $byValue[$r['value']]['confidence'] = max($byValue[$r['value']]['confidence'] ?? 0, (float) $r['confidence']);
+            $byValue[$r['value']]['sources'][$r['source']] = true;
+        }
+        if (! $byValue) return null;
+        uasort($byValue, fn ($a, $b) => [count($b['sources']), $b['confidence']] <=> [count($a['sources']), $a['confidence']]);
+        $value = array_key_first($byValue);
+        $strong = array_filter($byValue, fn ($v) => $v['confidence'] >= self::RELIABLE);
+        return ['value' => (string) $value, 'confidence' => round($byValue[$value]['confidence'], 1),
+            'sources' => array_keys($byValue[$value]['sources']), 'labeled' => $labeled,
+            'conflict' => count($strong) > 1 || ($strong && ! isset($strong[$value]))];
+    }
+
     public static function assess(array $document, array $submitted): array
     {
         $reads = $document['field_reads'] ?? [$document + ['source' => 'full_gray']];
@@ -54,7 +118,7 @@ final class LicenseFieldConfidence
         $lines = self::lines($read);
         if (! $lines) return [];
         $dates = [];
-        foreach (self::near($lines, '/EXPIRATION|EXPIRY/', '/DATE OF BIRTH|NATIONALITY|BLOOD|EYES|CONDITIONS/') as $line) {
+        foreach (self::near($lines, self::EXPIRY_LABEL, '/DATE OF BIRTH|NATIONALITY|BLOOD|EYES|CONDITIONS/') as $line) {
             if (preg_match('/DATE OF BIRTH|NATIONALITY/', self::normalize(self::text($line)))) continue;
             foreach (self::spans($line) as [$text, $confidence]) {
                 $date = self::date($text);
@@ -99,9 +163,9 @@ final class LicenseFieldConfidence
     {
         $lines = self::lines($read);
         if (! $lines) return [];
-        // "Licenge" is a common C/G OCR confusion in the printed label. This
-        // tolerance identifies the field only; its value must still match.
-        $region = in_array($read['source'] ?? '', ['number_color', 'number_gray'], true) ? $lines : self::near($lines, '/\bLICEN[CSG]E\s*(?:NO\b|NUMBER\b)/');
+        // Label misreads ("Licenge", "License Na.") identify the field only;
+        // its value must still parse as an LTO number and match.
+        $region = in_array($read['source'] ?? '', ['number_color', 'number_gray'], true) ? $lines : self::near($lines, self::NUMBER_LABEL);
         $numbers = [];
         foreach ($region as $line) foreach (self::spans($line) as [$text, $confidence]) {
             $value = self::number($text);

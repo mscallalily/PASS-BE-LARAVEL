@@ -6,6 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Models\Role;
+use App\Models\AuditLog;
+use Illuminate\Support\Facades\DB;
 
 
 class UserManagementController extends Controller
@@ -35,11 +38,14 @@ class UserManagementController extends Controller
             ], 403);
         }
 
-        $filters = $request->validate(['role' => ['nullable', 'in:admin,parking_staff,student,faculty,employee,guest'], 'page' => ['nullable', 'integer', 'min:1'], 'search' => ['nullable', 'string', 'max:100']]);
+        $filters = $request->validate(['role' => ['nullable', 'in:admin,parking_staff,student,faculty,employee,guest'], 'page' => ['nullable', 'integer', 'min:1'], 'search' => ['nullable', 'string', 'max:100'],
+            'archive' => ['nullable', 'in:active,archived']]);
         $query = User::with([
             'profile.department',
             'roles',
         ]);
+        // Archived accounts are soft-deleted; they are listed only when requested.
+        if (($filters['archive'] ?? 'active') === 'archived') $query->onlyTrashed();
 
         if ($role = $filters['role'] ?? null) {
             $codes = match ($role) { 'admin' => ['admin', 'parking_admin'], 'parking_staff' => ['security', 'parking_staff'], default => [$role] };
@@ -98,6 +104,7 @@ class UserManagementController extends Controller
                 'contact' => $profile?->contact_number,
                 'status' => $user->account_status,
                 'registered' => $user->created_at,
+                'archivedAt' => $user->deleted_at,
             ];
         });
 
@@ -143,4 +150,115 @@ class UserManagementController extends Controller
             return response()->json(['message' => $decision === 'approved' ? 'User account approved successfully.' : 'Account rejected and deactivated.', 'user' => ['id' => (string) $user->user_id, 'status' => $user->account_status]]);
         }, 3);
     }
+    /**
+     * Create an active Parking Staff account.
+     */
+    public function store(Request $request): JsonResponse
+    {
+        $actor = $request->user();
+
+        if (! $actor || ! $this->canManageUsers($actor)) {
+            return response()->json([
+                'message' => 'You are not authorized to create users.',
+            ], 403);
+        }
+
+        $data = $request->validate([
+            'full_name' => ['required', 'string', 'max:200', 'regex:/\S+\s+\S+/'],
+            'user_code' => ['required', 'string', 'max:50', 'unique:users,user_code'],
+            'email' => ['required', 'email', 'max:255', 'unique:users,email'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+            'department_id' => ['required', 'integer', 'exists:departments,department_id'],
+            'contact_number' => ['nullable', 'string', 'max:30'],
+        ]);
+
+        $role = Role::where('role_code', 'security')
+            ->where('is_active', true)
+            ->first();
+
+        if (! $role) {
+            return response()->json([
+                'message' => 'The Parking Staff role is unavailable.',
+            ], 500);
+        }
+
+        $nameParts = preg_split('/\s+/', trim($data['full_name']));
+        $firstName = array_shift($nameParts);
+        $lastName = array_pop($nameParts);
+        $middleName = ! empty($nameParts) ? implode(' ', $nameParts) : null;
+
+        $user = DB::transaction(function () use (
+            $data, $actor, $role, $firstName, $middleName, $lastName, $request
+        ) {
+            $user = User::create([
+                'user_code' => $data['user_code'],
+                'email' => $data['email'],
+                'password' => $data['password'],
+                'user_type' => 'security',
+                'account_status' => 'active',
+            ]);
+
+            $user->profile()->create([
+                'department_id' => $data['department_id'],
+                'first_name' => $firstName,
+                'middle_name' => $middleName,
+                'last_name' => $lastName,
+                'contact_number' => $data['contact_number'] ?? null,
+                'program_or_position' => 'Parking Staff',
+            ]);
+
+            $user->roles()->syncWithoutDetaching([
+                $role->role_id => [
+                    'assigned_at' => now(),
+                    'assigned_by' => $actor->user_id,
+                ],
+            ]);
+
+            AuditLog::create([
+                'user_id' => $actor->user_id,
+                'actor_label' => $actor->user_code ?? $actor->email ?? 'Administrator',
+                'action' => 'created',
+                'auditable_type' => User::class,
+                'auditable_id' => $user->user_id,
+                'old_values' => null,
+                'new_values' => [
+                    'user_code' => $user->user_code,
+                    'email' => $user->email,
+                    'user_type' => $user->user_type,
+                    'account_status' => $user->account_status,
+                    'department_id' => $data['department_id'],
+                    'program_or_position' => 'Parking Staff',
+                ],
+                'ip_address' => $request->ip(),
+                'user_agent' => substr((string) $request->userAgent(), 0, 255),
+            ]);
+
+            return $user;
+        });
+
+        $user->load(['profile.department', 'roles']);
+
+        return response()->json([
+            'message' => 'Parking Staff account created successfully.',
+            'user' => [
+                'id' => (string) $user->user_id,
+                'name' => trim(
+                    $user->profile->first_name . ' ' .
+                    ($user->profile->middle_name
+                        ? $user->profile->middle_name . ' '
+                        : '') .
+                    $user->profile->last_name
+                ),
+                'email' => $user->email,
+                'idNum' => $user->user_code,
+                'role' => $user->roles->first()?->role_code,
+                'userType' => $user->user_type,
+                'dept' => $user->profile->department?->department_name,
+                'contact' => $user->profile->contact_number,
+                'status' => $user->account_status,
+                'registered' => $user->created_at,
+            ],
+        ], 201);
+    }
+
 }

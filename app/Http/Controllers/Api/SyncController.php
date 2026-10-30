@@ -80,7 +80,11 @@ class SyncController extends Controller
             ->join('vehicles as v', 'v.vehicle_id', '=', 'va.vehicle_id')
             ->whereIn('a.auditable_type', ['vehicle_authorizations', \App\Models\VehicleAuthorization::class])
             ->when($ownerId !== null, fn ($q) => $q->where('v.owner_user_id', $ownerId));
-        return [$authorizations->selectRaw('MAX(va.authorization_id) m, MAX(va.updated_at) u')->first(), $decisions->max('a.log_id')];
+        // RFID assignment and issuance (inventory stickers) change what the vehicle pages show.
+        $rfid = DB::table('rfid_assignments as r')->when($ownerId !== null, fn ($q) => $q->where('r.user_id', $ownerId));
+        return [$authorizations->selectRaw('MAX(va.authorization_id) m, MAX(va.updated_at) u')->first(), $decisions->max('a.log_id'),
+            $rfid->selectRaw('MAX(r.assignment_id) m, MAX(r.updated_at) u')->first(),
+            ...($ownerId === null ? [DB::table('rfid_tags')->selectRaw('COUNT(*) c, MAX(updated_at) u')->first()] : [])];
     }
 
     private function notifications(int $userId): object
