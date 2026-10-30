@@ -22,3 +22,7 @@ yarn-error.log
 /.vscode
 /.zed
 .env.testing
+
+/backup/*.sql
+
+/pass_db_before_demo.sql
