@@ -6,7 +6,6 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\VehicleAuthorization;
-use App\Support\CampusTime;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,6 +22,9 @@ class VehicleAuthorizationController extends Controller
         'va.authorization_id',
         'va.sticker_number',
         'va.authorization_status',
+        'va.document_check_status',
+        'va.document_checked_at',
+        'va.approval_source',
         'va.valid_from',
         'va.valid_until',
         'va.requested_at',
@@ -143,60 +145,21 @@ class VehicleAuthorizationController extends Controller
         ]);
     }
 
-    /** Review a pending vehicle authorization; RFID assignment stays separate. */
+    /**
+     * Manual approval is retired for campus vehicles: the automatic OR/CR check
+     * (ProcessVehicleDocumentCheck) approves only when every requirement passes,
+     * otherwise the owner corrects or re-uploads. Staff keep monitoring,
+     * suspension and lifting. Guest/visitor vehicles have no authorization
+     * records; their visit requests keep the separate manual Admin approval.
+     */
     public function review(Request $request, int $id): JsonResponse
     {
         $actor = $request->user();
         abort_unless($this->canManage($actor), 403);
-        $data = $request->validate([
-            'decision' => ['required', 'in:approved,rejected'],
-            'reason' => ['required_if:decision,rejected', 'nullable', 'string', 'max:255'],
-        ]);
-        return DB::transaction(function () use ($request, $actor, $data, $id) {
-            $authorization = VehicleAuthorization::lockForUpdate()->findOrFail($id);
-            if ($authorization->authorization_status !== 'pending') {
-                return response()->json(['message' => 'Only pending authorizations can be reviewed. Refresh the list.'], 409);
-            }
-            $vehicle = DB::table('vehicles')->where('vehicle_id', $authorization->vehicle_id)->lockForUpdate()->first();
-            if (!$vehicle || $vehicle->deleted_at || $vehicle->registration_status !== 'registered') {
-                return response()->json(['message' => 'Vehicle is no longer registered.'], 422);
-            }
-            $latestId = DB::table('vehicle_authorizations')->where('vehicle_id', $vehicle->vehicle_id)->max('authorization_id');
-            if ((int) $latestId !== (int) $authorization->authorization_id) {
-                return response()->json(['message' => 'A newer submission exists. Refresh and review the latest vehicle details and photo.'], 409);
-            }
-            if ($data['decision'] === 'approved') {
-                $blockers = $this->liftBlockers($authorization);
-                if (!$vehicle->vehicle_photo_path || !\Illuminate\Support\Facades\Storage::disk('private')->exists($vehicle->vehicle_photo_path)) {
-                    $blockers[] = 'A vehicle photo showing the plate is required before approval.';
-                }
-                $eligibleDriver = DB::table('vehicle_driver as vd')
-                    ->join('drivers as d', 'vd.driver_id', '=', 'd.driver_id')
-                    ->join('driver_licenses as dl', 'd.driver_id', '=', 'dl.driver_id')
-                    ->where('vd.vehicle_id', $vehicle->vehicle_id)->where('d.driver_status', 'active')
-                    ->whereRaw('dl.license_id = (SELECT MAX(latest.license_id) FROM driver_licenses latest WHERE latest.driver_id = d.driver_id)')
-                    ->where('dl.verification_status', 'verified')->where('dl.license_status', 'valid')
-                    ->where('dl.expiry_date', '>=', CampusTime::date())
-                    ->where(fn ($q) => $q->whereNull('vd.authorized_from')->orWhere('vd.authorized_from', '<=', CampusTime::date()))
-                    ->where(fn ($q) => $q->whereNull('vd.authorized_until')->orWhere('vd.authorized_until', '>=', CampusTime::date()))
-                    ->exists();
-                if (!$eligibleDriver) $blockers[] = 'The latest license of an eligible linked driver must be verified and unexpired.';
-
-                if ($blockers) return response()->json(['message' => implode(' ', $blockers)], 422);
-            }
-            $old = $authorization->only(['authorization_status', 'remarks', 'reviewed_by', 'reviewed_at']);
-            $authorization->forceFill([
-                'authorization_status' => $data['decision'],
-                'remarks' => $data['reason'] ?? null,
-                'reviewed_by' => $actor->user_id,
-                'reviewed_at' => now(),
-            ])->save();
-            $this->audit($request, $actor, 'authorization_'.$data['decision'], $authorization, $old);
-            return response()->json([
-                'message' => 'Vehicle authorization '.$data['decision'].'. RFID assignment remains separate.',
-                'data' => $this->staffQuery()->where('va.authorization_id', $id)->first(),
-            ]);
-        });
+        return response()->json([
+            'message' => 'Vehicle authorizations are decided by the automatic OR/CR document check. The owner corrects or re-uploads documents when a check fails; staff can suspend or lift approved authorizations.',
+            'code' => 'vehicle_decisions_automatic',
+        ], 403);
     }
 
     /**
@@ -281,7 +244,7 @@ class VehicleAuthorizationController extends Controller
                 ], 409);
             }
 
-            $blockers = $this->liftBlockers($authorization);
+            $blockers = app(\App\Services\Vehicles\VehicleApprovalEligibility::class)->liftBlockers($authorization);
 
             if ($blockers) {
                 return response()->json([
@@ -308,73 +271,6 @@ class VehicleAuthorizationController extends Controller
                 'data' => $this->staffQuery()->where('va.authorization_id', $id)->first(),
             ]);
         });
-    }
-
-    /**
-     * Reasons the authorization cannot return to approved. Empty when eligible.
-     *
-     * @return string[]
-     */
-    private function liftBlockers(VehicleAuthorization $authorization): array
-    {
-        $today = CampusTime::date();
-        $blockers = [];
-
-        $vehicle = DB::table('vehicles')
-            ->where('vehicle_id', $authorization->vehicle_id)
-            ->first();
-
-        if (!$vehicle || $vehicle->deleted_at !== null || $vehicle->registration_status !== 'registered') {
-            return ['The vehicle is no longer registered.'];
-        }
-
-        if ($authorization->valid_until && $authorization->valid_until < $today) {
-            $blockers[] = "The authorization validity ended on {$authorization->valid_until}.";
-        }
-
-        if ($vehicle->owner_user_id) {
-            $ownerStatus = DB::table('users')
-                ->where('user_id', $vehicle->owner_user_id)
-                ->whereNull('deleted_at')
-                ->value('account_status');
-
-            if ($ownerStatus !== 'active') {
-                $blockers[] = "The owner's account is " . ($ownerStatus ?? 'missing') . '.';
-            }
-        } elseif (DB::table('visitors')->where('visitor_id', $vehicle->owner_visitor_id)->value('is_blacklisted')) {
-            $blockers[] = 'The visitor who owns this vehicle is blacklisted.';
-        }
-
-        $latestId = DB::table('vehicle_authorizations')->where('vehicle_id', $authorization->vehicle_id)->max('authorization_id');
-        if ((int) $latestId !== (int) $authorization->authorization_id) {
-            $blockers[] = 'A newer authorization exists. Review the current vehicle record.';
-        }
-
-        // When drivers are linked, at least one must be active, still
-        // authorized for this vehicle, and hold a verified, valid, unexpired license
-        // (the same rule the gate applies at entry).
-        $hasLinkedDrivers = DB::table('vehicle_driver')
-            ->where('vehicle_id', $authorization->vehicle_id)
-            ->exists();
-
-        if ($hasLinkedDrivers) {
-            $hasEligibleDriver = DB::table('vehicle_driver as vd')
-                ->join('drivers as d', 'vd.driver_id', '=', 'd.driver_id')
-                ->join('driver_licenses as dl', 'dl.driver_id', '=', 'd.driver_id')
-                ->where('vd.vehicle_id', $authorization->vehicle_id)
-                ->where('d.driver_status', 'active')
-                ->where(fn ($q) => $q->whereNull('vd.authorized_until')->orWhere('vd.authorized_until', '>=', $today))
-                ->where('dl.license_status', 'valid')
-                ->where('dl.verification_status', 'verified')
-                ->where(fn ($q) => $q->whereNull('dl.expiry_date')->orWhere('dl.expiry_date', '>=', $today))
-                ->exists();
-
-            if (!$hasEligibleDriver) {
-                $blockers[] = 'No linked driver has an active record and a verified, valid, unexpired license.';
-            }
-        }
-
-        return $blockers;
     }
 
     /**

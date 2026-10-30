@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Parking;
 
+use App\Jobs\ProcessVehicleDocumentCheck;
 use App\Jobs\ProcessVehiclePlateCheck;
 use App\Services\LicenseVerification\LicenseDocumentReader;
 use App\Support\PlateNumber;
@@ -20,6 +21,8 @@ class VehicleRegistrationFlowTest extends ParkingTestCase
     {
         parent::setUp(); Storage::fake('private'); Cache::flush(); Queue::fake();
         $this->mock(LicenseDocumentReader::class)->shouldNotReceive('read', 'readTextImage');
+        // These tests cover the saved records and other rules; the OR/CR check has its own tests.
+        $this->passingDocumentCheck();
     }
     private function owner(): array
     {
@@ -30,23 +33,25 @@ class VehicleRegistrationFlowTest extends ParkingTestCase
     private function payload(string $plate = '765WOR', string $type = 'Motorcycle'): array
     {
         return ['plate_number' => $plate, 'vehicle_type' => $type, 'make' => 'HONDA', 'model' => 'CLICK', 'color' => 'BLACK',
-            'vehicle_photo' => UploadedFile::fake()->image('vehicle.png', 1200, 800)];
+            'vehicle_photo' => UploadedFile::fake()->image('vehicle.png', 1200, 800),
+            'or_document' => UploadedFile::fake()->image('or.jpg', 1600, 1100), 'cr_document' => UploadedFile::fake()->image('cr.jpg', 1600, 1100)];
     }
     private function submit(array $data)
     {
         return $this->post('/api/vehicles', $data, ['Accept' => 'application/json']);
     }
-    public function test_registration_requests_staff_review_for_correct_lot_without_reading_photo_and_keeps_rfid_separate(): void
+    public function test_registration_queues_the_automatic_check_for_correct_lot_without_reading_photo_and_keeps_rfid_separate(): void
     {
         $car = $this->owner(); $tags = DB::table('rfid_assignments')->count();
         $r = $this->submit($this->payload('765 wor') + ['authorization_status' => 'rejected', 'parking_area_id' => 999, 'owner_user_id' => 999, 'authenticity_verified' => true])->assertCreated()
-            ->assertJsonPath('authorization_status', 'pending')->assertJsonPath('approval_basis', 'staff_review_required')
+            ->assertJsonPath('authorization_status', 'pending')->assertJsonPath('approval_basis', 'automatic_document_check')
             ->assertJsonPath('plate_verified', false)->assertJsonPath('photo_verified', false)->assertJsonPath('authenticity_verified', false)->assertJsonPath('ownership_verified', false);
         $id = $r->json('vehicle_id'); $area = DB::table('parking_areas')->where('area_code', 'MC')->value('parking_area_id');
         $this->assertDatabaseHas('vehicles', ['vehicle_id' => $id, 'owner_user_id' => $car['user']->user_id, 'plate_number' => '765 WOR', 'color' => 'BLACK', 'make' => 'HONDA', 'model' => 'CLICK']);
         $this->assertDatabaseHas('vehicle_authorizations', ['vehicle_id' => $id, 'authorization_status' => 'pending', 'parking_area_id' => $area, 'reviewed_by' => null, 'reviewed_at' => null]);
         $this->assertDatabaseHas('audit_logs', ['action' => 'vehicle_registration_submitted']);
-        $this->assertDatabaseCount('rfid_assignments', $tags); $this->assertDatabaseCount('parking_transactions', 0); Queue::assertNothingPushed();
+        $this->assertDatabaseCount('rfid_assignments', $tags); $this->assertDatabaseCount('parking_transactions', 0);
+        Queue::assertPushed(ProcessVehicleDocumentCheck::class, 1); Queue::assertNotPushed(ProcessVehiclePlateCheck::class);
         $list = collect($this->getJson('/api/vehicles')->assertOk()->json('vehicles'))->firstWhere('id', (string) $id);
         foreach (['vehicle_photo_path', 'candidates', 'confidence'] as $key) $this->assertArrayNotHasKey($key, $list);
     }
@@ -54,7 +59,7 @@ class VehicleRegistrationFlowTest extends ParkingTestCase
     {
         $this->owner();
         $r = $this->submit($this->payload('765W0R') + ['plate_verified' => true, 'photo_verified' => true, 'evidence_verified' => true, 'plate_number_read' => '765WOR'])
-            ->assertCreated()->assertJsonPath('plate_verified', false)->assertJsonPath('photo_verified', false)->assertJsonPath('approval_basis', 'staff_review_required');
+            ->assertCreated()->assertJsonPath('plate_verified', false)->assertJsonPath('photo_verified', false)->assertJsonPath('approval_basis', 'automatic_document_check');
         $audit = DB::table('audit_logs')->where('action', 'vehicle_registration_submitted')->orderByDesc('log_id')->first();
         $this->assertNotNull($audit);
         $this->assertFalse(json_decode($audit->new_values, true)['plate_verified']);
@@ -67,7 +72,8 @@ class VehicleRegistrationFlowTest extends ParkingTestCase
             Cache::flush();
             $this->submit($this->payload($plate))->assertUnprocessable()->assertJsonValidationErrors('plate_number');
         }
-        Cache::flush(); $this->submit(['plate_number' => ['BAD']])->assertUnprocessable()->assertJsonValidationErrors(['plate_number', 'vehicle_photo', 'vehicle_type']);
+        // The vehicle photo is optional; the OR, CR and confirmed details are required.
+        Cache::flush(); $this->submit(['plate_number' => ['BAD']])->assertUnprocessable()->assertJsonValidationErrors(['plate_number', 'vehicle_type', 'make', 'model', 'color', 'or_document', 'cr_document'])->assertJsonMissingValidationErrors('vehicle_photo');
         $this->assertDatabaseCount('vehicles', $before); $this->assertSame([], Storage::disk('private')->allFiles());
     }
 
@@ -85,7 +91,9 @@ class VehicleRegistrationFlowTest extends ParkingTestCase
         $this->owner(); $before = DB::table('vehicles')->count();
         $data = $this->payload(); $data['vehicle_photo'] = UploadedFile::fake()->create('not-photo.txt', 10, 'text/plain');
         $this->submit($data)->assertUnprocessable()->assertJsonValidationErrors('vehicle_photo');
-        unset($data['vehicle_photo']); $this->submit($data)->assertUnprocessable()->assertJsonValidationErrors('vehicle_photo');
+        // Without a photo the registration is accepted (the photo is optional); an invalid OR still is not.
+        $data['or_document'] = UploadedFile::fake()->create('or.txt', 10, 'text/plain'); unset($data['vehicle_photo']);
+        $this->submit($data)->assertUnprocessable()->assertJsonValidationErrors('or_document');
         $this->assertDatabaseCount('vehicles', $before); $this->assertSame([], Storage::disk('private')->allFiles());
     }
 
@@ -109,7 +117,7 @@ class VehicleRegistrationFlowTest extends ParkingTestCase
     public function test_pending_license_and_invalid_input_do_not_create_registration(): void
     {
         $car = $this->owner();
-        $this->submit(['plate_number' => '<script>'])->assertUnprocessable()->assertJsonValidationErrors(['plate_number', 'vehicle_photo', 'vehicle_type']);
+        $this->submit(['plate_number' => '<script>'])->assertUnprocessable()->assertJsonValidationErrors(['plate_number', 'vehicle_type'])->assertJsonMissingValidationErrors('vehicle_photo');
         DB::table('driver_licenses')->where('driver_id', $car['driver_id'])->update(['verification_status' => 'pending_review']);
         $this->submit($this->payload())->assertUnprocessable()->assertJsonValidationErrors('license');
     }

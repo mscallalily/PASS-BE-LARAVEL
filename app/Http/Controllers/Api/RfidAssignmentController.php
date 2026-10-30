@@ -58,6 +58,9 @@ class RfidAssignmentController extends Controller
                     throw ValidationException::withMessages(['vehicle_id' => 'This vehicle already has an active RFID assignment. Revoke it before assigning another tag.']);
                 }
                 $tag = DB::table('rfid_tags')->where('tag_uid', $data['tag_uid'])->lockForUpdate()->first();
+                if ($tag?->inventory_registered_at) {
+                    throw ValidationException::withMessages(['tag_uid' => 'This sticker is reserved in the RFID Inventory for new registrations and is assigned automatically. Use another tag.']);
+                }
                 if ($tag && ($tag->tag_status !== 'available' || DB::table('rfid_assignments')->where('rfid_id', $tag->rfid_id)->where('assignment_status', 'active')->exists())) {
                     throw ValidationException::withMessages(['tag_uid' => 'This tag is already assigned or unavailable.']);
                 }

@@ -21,8 +21,6 @@ use App\Http\Controllers\Api\VisitorAccessController;
 use App\Http\Controllers\Api\DeviceSimulatorController;
 use App\Http\Controllers\Api\GuestAccountController;
 use App\Http\Controllers\Api\SyncController;
-use App\Http\Controllers\Api\AdminDashboardController;
-use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\SystemSettingsController;
 use App\Http\Controllers\Api\ParkingSlotSimulationController;
 
@@ -81,6 +79,16 @@ Route::post(
 
 Route::post('/vehicles/{id}/resubmit', [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'resubmit'])
     ->whereNumber('id')->middleware('throttle:vehicle-plate-submit');
+
+// OR/CR documents (private) and the owner's retry when the reading service was unavailable.
+Route::get('/vehicles/{id}/documents/{document}', [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'document'])
+    ->whereNumber('id');
+Route::post('/vehicles/{id}/document-check/retry', [\App\Http\Controllers\Api\VehicleRegistrationController::class, 'retryDocumentCheck'])
+    ->whereNumber('id')->middleware('throttle:vehicle-plate-submit');
+
+// Read a license or OR/CR image to pre-fill the form. Nothing is stored or approved here.
+Route::post('/documents/autofill', \App\Http\Controllers\Api\DocumentAutofillController::class)
+    ->middleware('throttle:20,1,document-autofill:');
 
     Route::patch(
     '/vehicles/authorizations/{id}/review',
@@ -146,6 +154,11 @@ Route::post(
     Route::get('/rfid/assignments', [AccessEventController::class, 'rfidAssignments']);
     Route::post('/rfid/assignments', [\App\Http\Controllers\Api\RfidAssignmentController::class, 'store'])->middleware('throttle:20,1,api-action-10:');
     Route::patch('/rfid/assignments/{id}/revoke', [\App\Http\Controllers\Api\RfidAssignmentController::class, 'revoke'])->whereNumber('id');
+    // Admin RFID inventory: stickers scanned with the existing USB reader, automatic assignment, physical issuance.
+    Route::get('/rfid/inventory', [\App\Http\Controllers\Api\RfidInventoryController::class, 'index']);
+    Route::post('/rfid/inventory', [\App\Http\Controllers\Api\RfidInventoryController::class, 'store'])->middleware('throttle:60,1,rfid-inventory:');
+    Route::post('/rfid/inventory/{id}/issue', [\App\Http\Controllers\Api\RfidInventoryController::class, 'issue'])->whereNumber('id');
+    Route::post('/rfid/inventory/{id}/retire', [\App\Http\Controllers\Api\RfidInventoryController::class, 'retire'])->whereNumber('id');
 
 
     // Visitor registration, requests, approval and Visitor QR passes.

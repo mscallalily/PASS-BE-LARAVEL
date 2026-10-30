@@ -58,7 +58,7 @@ class LicenseFieldDecisionTest extends ParkingTestCase
         [$car, $license] = $this->process();
         $this->assertSame('verified', $license->verification_status);
         $this->assertLessThan(80, $license->ocr_result['confidence']);
-        $this->assertSame('license-document-auto-v4', $license->ocr_result['policy_version']);
+        $this->assertSame(\App\Services\LicenseVerification\LicenseValidationRules::POLICY_VERSION, $license->ocr_result['policy_version']);
         $this->assertTrue($license->ocr_result['identity_confidence']['reliable']);
         $this->assertSame('required_fields_and_corroboration', $license->ocr_result['confidence_basis']);
         $this->assertDatabaseHas('audit_logs', ['auditable_id' => $license->license_id, 'action' => 'license_auto_verified']);

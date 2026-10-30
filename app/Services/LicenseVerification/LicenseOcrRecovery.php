@@ -12,7 +12,7 @@ final class LicenseOcrRecovery
 
     public function read(string $path, string $mime): array
     {
-        $full = $this->reader->read($path, $mime);
+        $full = $this->reader->read($path, $mime, orient: true);
         if (! in_array($mime, ['image/jpeg', 'image/png'], true) || empty($full['engine_available'])
             || empty($full['words'][0]['line']) || ($full['width'] ?? 0) < 500 || ($full['height'] ?? 0) < 300) return $full;
         $ratio = $full['width'] / $full['height'];
@@ -26,6 +26,13 @@ final class LicenseOcrRecovery
             $angle = match ((int) $orientation) { 3 => 180, 6 => -90, 8 => 90, default => 0 };
             if ($angle) {
                 $rotated = imagerotate($image, $angle, 0);
+                if (! $rotated) return $full;
+                imagedestroy($image); $image = $rotated;
+            }
+            // Same straightening, crop and upright turn the reader applied.
+            if (! empty($full['geometry'])) $image = LicenseDocumentReader::applyGeometry($image, $full['geometry']);
+            if ($turn = (int) ($full['rotation'] ?? 0)) {
+                $rotated = imagerotate($image, 360 - $turn, 0);
                 if (! $rotated) return $full;
                 imagedestroy($image); $image = $rotated;
             }

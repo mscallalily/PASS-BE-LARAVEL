@@ -12,7 +12,7 @@ use Carbon\CarbonImmutable;
  */
 class LicenseValidationRules
 {
-    public const POLICY_VERSION = 'license-document-auto-v4';
+    public const POLICY_VERSION = 'license-document-auto-v7';
 
     /** Below this Laplacian variance the photo is too blurry to read reliably. */
     public const BLUR_THRESHOLD = 60.0;
@@ -118,12 +118,19 @@ class LicenseValidationRules
         $width = $document['width'] ?? null;
         $height = $document['height'] ?? null;
         $sharpness = $document['sharpness'] ?? null;
+        // A low resolution or sharpness score alone does not reject the image:
+        // the text is still read, and the image is accepted when every required
+        // field reads reliably. Otherwise it explains why a field was unreadable.
+        $hints = [];
+        $qualityProblem = false;
         if ($width !== null && $height !== null && ($width < self::MIN_WIDTH || $height < self::MIN_HEIGHT)) {
-            $checks['image_quality'] = $this->check('fail', "Resolution {$width}x{$height} is below the minimum ".self::MIN_WIDTH.'x'.self::MIN_HEIGHT.'.');
-            $reasons[] = 'The image resolution is too low. Upload a clear, full-size photo of the license front.';
+            $qualityProblem = true;
+            $checks['image_quality'] = $this->check('uncertain', "Resolution {$width}x{$height} is below the usual minimum ".self::MIN_WIDTH.'x'.self::MIN_HEIGHT.'.');
+            $hints['image_quality'] = 'The photo resolution is too low to read the license details reliably. Move closer so the license fills the photo, or upload a full-size photo.';
         } elseif ($sharpness !== null && $sharpness < self::BLUR_THRESHOLD) {
-            $checks['image_quality'] = $this->check('fail', "Sharpness {$sharpness} is below ".self::BLUR_THRESHOLD.'.');
-            $reasons[] = 'The image is too blurry for automatic approval. Retake the full license front in good light and in focus.';
+            $qualityProblem = true;
+            $checks['image_quality'] = $this->check('uncertain', "Sharpness {$sharpness} is below ".self::BLUR_THRESHOLD.'.');
+            $hints['image_quality'] = 'The photo is out of focus, so the license details could not be read reliably. Hold the camera steady and retake the license front in focus.';
         } else {
             $qualityKnown = $width !== null && $height !== null && $sharpness !== null;
             $checks['image_quality'] = $this->check($qualityKnown ? 'pass' : 'uncertain', $qualityKnown ? "Resolution {$width}x{$height}, sharpness {$sharpness}." : 'Image quality could not be measured.');
@@ -143,10 +150,14 @@ class LicenseValidationRules
 
         $hasAgency = str_contains($headingText, 'LAND TRANSPORTATION');
         $hasTitle = (bool) preg_match("/DRIVER'?S?\\s+LICENSE|STUDENT\\s+PERMIT/", $headingText);
-        $hasExpiryLabel = (bool) preg_match('/EXPIRATION|EXPIRY/', $headingText);
+        $hasExpiryLabel = (bool) preg_match(LicenseFieldConfidence::EXPIRY_LABEL, $headingText);
         $recognized = $score >= 4 && $hasAgency && $hasTitle && $hasExpiryLabel;
         $checks['document_type'] = $this->check($recognized ? 'pass' : ($score >= 4 ? 'uncertain' : 'fail'), "Matched {$score} LTO marker groups; agency, document title and expiry heading ".($recognized ? 'present.' : 'could not all be confirmed.'));
-        if (!$recognized && $score < 4) {
+        if (!$recognized && $score < 4 && $textChars < self::MIN_TEXT_CHARS) {
+            // Unreadable, not a finding about the kind of document.
+            $checks['document_type'] = $this->check('uncertain', "Only {$textChars} readable characters; the document type could not be judged.");
+            $reasons[] = $hints['image_quality'] ?? 'Almost no text could be read from the photo. Retake the full license front, flat, in good light and in focus.';
+        } elseif (!$recognized && $score < 4) {
             $reasons[] = "The required Philippine LTO license headings could not be confirmed. Upload the full, clear front of your license. For a different license format, contact PASS staff.";
         }
 
@@ -154,11 +165,17 @@ class LicenseValidationRules
             $checks['license_number'] = $this->check('pass', 'The license number read from the document matches the submitted number.');
         } elseif ($numbers && $this->closestDistance($submittedNumber, $numbers) <= 1) {
             $checks['license_number'] = $this->check('uncertain', 'The number differs by one character; automatic approval requires an exact normalized match.');
+            $hints['license_number'] = 'The license number you entered differs by one character from the number read on the license. Check your entry against the card; if it is correct, retake the photo with the License No. area sharp.';
         } elseif ($numbers && (! $structured || $identityConfidence['number_conflict'])) {
             $checks['license_number'] = $this->check('fail', 'The number read from the document does not match the submitted number.');
             $reasons[] = 'The license number on the document ('.self::formatLicenseNumber($numbers[0]).') does not match the number you entered. Correct the number or upload your own license.';
+        } elseif ($numbers) {
+            // Read, but not confidently enough to call it a mismatch.
+            $checks['license_number'] = $this->check('uncertain', 'A different number was read with low confidence.');
+            $hints['license_number'] = 'The license number read from the photo does not match the number you entered. Check your entry; if it is correct, retake the photo with the License No. area sharp and free of glare.';
         } else {
             $checks['license_number'] = $this->check('uncertain', 'The license number could not be read.');
+            $hints['license_number'] = 'The license number could not be read from the photo. Retake it so the License No. area is in focus and not covered by glare, shadow or a finger.';
         }
 
         // Only the labeled expiry field is used. Missing/ambiguous expiry OCR
@@ -173,6 +190,7 @@ class LicenseValidationRules
             $reasons[] = 'The expiration date on the document does not match the date you entered. Check the expiry date and upload the full front of the license.';
         } else {
             $checks['expiry_date'] = $this->check('uncertain', 'The expiration field could not be read consistently. A birth date is not used as the expiry date.');
+            $hints['expiry_date'] = 'The expiration date could not be read from the photo. Retake it so the Expiration Date area is in focus and not covered by glare, shadow or a finger.';
         }
 
         $name = $this->checkName($text, $submitted['first_name'] ?? null, $submitted['last_name'] ?? null);
@@ -197,8 +215,24 @@ class LicenseValidationRules
         }
 
         if ($identityConfidence['available']) {
-            $otherChecksPass = ! $reasons && collect($checks)->except('ocr_confidence')->every(fn ($check) => $check['result'] === 'pass');
+            // A low quality score is outweighed only by reliable field evidence.
+            $otherChecksPass = ! $reasons && collect($checks)->except($qualityProblem ? ['ocr_confidence', 'image_quality'] : ['ocr_confidence'])->every(fn ($check) => $check['result'] === 'pass');
             $reliable = $identityConfidence['reliable'] && $otherChecksPass && $confidence !== null;
+            if ($qualityProblem && $reliable) {
+                $checks['image_quality'] = $this->check('pass', $checks['image_quality']['detail'].' Every required field was still read with at least '.LicenseFieldConfidence::RELIABLE.'% confidence.');
+                unset($hints['image_quality']);
+            }
+            // Fields found but read faintly (missing ones have their own reason).
+            $faint = fn (string $field) => ($identityConfidence['fields'][$field] ?? null) !== null && $identityConfidence['fields'][$field] < LicenseFieldConfidence::RELIABLE;
+            $unclear = [];
+            if ($faint('name')) $unclear[] = 'your name';
+            // A number or date that does not match is explained by its own check.
+            if (($checks['license_number']['result'] ?? null) === 'pass' && ($identityConfidence['number_conflict'] || ($faint('license_number') && ! $identityConfidence['number_consensus']))) $unclear[] = 'the license number';
+            if (($checks['expiry_date']['result'] ?? null) === 'pass' && ($identityConfidence['expiry_conflict'] || $faint('expiry_date'))) $unclear[] = 'the expiration date';
+            if ($unclear) {
+                $hints['ocr_confidence'] = ucfirst(implode(', ', array_slice($unclear, 0, -1)).(count($unclear) > 1 ? ' and ' : '').end($unclear))
+                    .' could not be read clearly enough for automatic approval. Retake the license front so '.(count($unclear) > 1 ? 'these details are' : 'this detail is').' in focus and free of glare.';
+            }
             $fields = $identityConfidence['fields'];
             $numberBasis = $identityConfidence['number_consensus'] ? 'license number corroborated across whole-card, broad-region and color-region reads'
                 : sprintf('license number %.1f%%', $fields['license_number'] ?? 0);
@@ -208,13 +242,14 @@ class LicenseValidationRules
             if ($identityConfidence['expiry_conflict']) $detail .= ' Strong expiry readings disagree; automatic approval is blocked.';
             $checks['ocr_confidence'] = $this->check($reliable ? 'pass' : 'uncertain', $detail);
         }
-        $result = $this->result($reasons, $notes, $checks, $extracted, $score);
+        $result = $this->result($reasons, $notes, $checks, $extracted, $score, hints: $hints);
         $result['identity_confidence'] = $identityConfidence;
         $result['confidence_basis'] = $identityConfidence['available'] ? 'required_fields_and_corroboration' : 'whole_image_mean';
         return $result;
     }
 
-    private function result(array $reasons, array $notes, array $checks, array $extracted, int $score, bool $unavailable = false): array
+    /** @param array<string, string> $hints specific, actionable reasons that replace a check's generic one */
+    private function result(array $reasons, array $notes, array $checks, array $extracted, int $score, bool $unavailable = false, array $hints = []): array
     {
         $review = !$unavailable && !$reasons && $score >= 4
             && collect($checks)->except(['ocr_confidence', 'document_type'])->every(fn ($check) => $check['result'] === 'pass')
@@ -235,7 +270,10 @@ class LicenseValidationRules
             }
             foreach ($required as $key => $reason) {
                 if (($checks[$key]['result'] ?? null) !== 'pass') {
-                    $reasons[] = $reason;
+                    // A field-specific reason already says what to retake; skip the general one.
+                    if ($key === 'ocr_confidence' && ! isset($hints['ocr_confidence']) && collect(['image_quality', 'text_extraction', 'license_number', 'expiry_date', 'name', 'license_type'])
+                        ->contains(fn ($field) => isset($checks[$field]) && $checks[$field]['result'] !== 'pass')) continue;
+                    $reasons[] = $hints[$key] ?? $reason;
                 }
             }
         }
@@ -274,7 +312,12 @@ class LicenseValidationRules
     {
         $score = 0;
 
-        foreach (self::LICENSE_MARKERS as $phrases) {
+        foreach (self::LICENSE_MARKERS as $group => $phrases) {
+            $label = ['license_number_label' => LicenseFieldConfidence::NUMBER_LABEL, 'expiry_label' => LicenseFieldConfidence::EXPIRY_LABEL][$group] ?? null;
+            if ($label && preg_match($label, $text)) {
+                $score++;
+                continue;
+            }
             foreach ($phrases as $phrase) {
                 if (str_contains($text, $phrase)) {
                     $score++;
@@ -352,7 +395,7 @@ class LicenseValidationRules
     {
         $lines = preg_split('/\r?\n/', $text);
         foreach ($lines as $i => $line) {
-            if (! preg_match('/EXPIRATION|EXPIRY/', $line) || preg_match('/DATE OF BIRTH|NATIONALITY/', $line)) continue;
+            if (! preg_match(LicenseFieldConfidence::EXPIRY_LABEL, $line) || preg_match('/DATE OF BIRTH|NATIONALITY/', $line)) continue;
             $block = $line;
             foreach (array_slice($lines, $i + 1, 2) as $next) {
                 if (preg_match('/DATE OF BIRTH|NATIONALITY|BLOOD|EYES|CONDITIONS/', $next)) break;
